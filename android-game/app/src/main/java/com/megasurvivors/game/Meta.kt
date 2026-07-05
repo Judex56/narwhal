@@ -21,17 +21,38 @@ class MetaStore(context: Context) {
             ).toMutableSet()
 
     var selectedWeapon: String = prefs.getString("sel_weapon", "DART") ?: "DART"
-    var selectedItem: String = prefs.getString("sel_item", "") ?: ""
     val selectedTomes: MutableSet<String> =
         (prefs.getStringSet("sel_tomes", null) ?: emptySet()).toMutableSet()
 
-    /** Найденные предметы: только их можно брать стартовыми. */
+    /** Найденные предметы (коллекция; открываются, когда выпадут в забеге). */
     val discoveredItems: MutableSet<String> =
         (prefs.getStringSet("discovered", null) ?: ItemPool.defaultDiscovered).toMutableSet()
+
+    /**
+     * Выключенные из пула выпадения предметы. Выключать можно только
+     * найденные; ненайденные всегда могут выпасть (так они и открываются).
+     */
+    val disabledItems: MutableSet<String> =
+        (prefs.getStringSet("disabled", null) ?: emptySet()).toMutableSet()
 
     var bestTime: Int = prefs.getInt("best_time", 0)
 
     fun isDiscovered(id: String): Boolean = discoveredItems.contains(id)
+
+    fun isEnabled(id: String): Boolean = !disabledItems.contains(id)
+
+    /** true — предмет теперь включён в пул. */
+    fun toggleItem(id: String): Boolean {
+        val enabledNow = if (disabledItems.contains(id)) {
+            disabledItems.remove(id)
+            true
+        } else {
+            disabledItems.add(id)
+            false
+        }
+        save()
+        return enabledNow
+    }
 
     fun discover(id: String) {
         if (discoveredItems.add(id)) save()
@@ -42,9 +63,9 @@ class MetaStore(context: Context) {
             .putInt("gold", gold)
             .putStringSet("unlocked", unlockedWeapons)
             .putString("sel_weapon", selectedWeapon)
-            .putString("sel_item", selectedItem)
             .putStringSet("sel_tomes", selectedTomes)
             .putStringSet("discovered", discoveredItems)
+            .putStringSet("disabled", disabledItems)
             .putInt("best_time", bestTime)
             .apply()
     }

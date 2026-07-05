@@ -149,10 +149,12 @@ object ItemPool {
             setOf("fang", "clover", "goblet", "frost_cube", "plague_heart", "dark_sickle")
 
     /**
-     * Выпадение предмета из сундука. Катализаторы не дублируются.
-     * Чем позже минута забега, тем жирнее тиры.
+     * Выпадение предмета из сундука. Катализаторы не дублируются,
+     * выключенные игроком предметы не выпадают (ненайденные — всегда
+     * в пуле: так игрок открывает новые). Чем позже минута забега,
+     * тем жирнее тиры.
      */
-    fun roll(rng: Random, minute: Int, owned: List<ItemDef>): ItemDef {
+    fun roll(rng: Random, minute: Int, owned: List<ItemDef>, disabled: Set<String>): ItemDef {
         val tierBoost = 1f + minute * 0.08f
         val weights = Tier.entries.map { tier ->
             if (tier == Tier.COMMON) tier.baseWeight else tier.baseWeight * tierBoost
@@ -166,12 +168,14 @@ object ItemPool {
                 break
             }
         }
-        val pool = catalog.filter { def ->
-            def.tier == tier && !(def.isCatalyst && owned.any { it.id == def.id })
-        }
-        if (pool.isEmpty()) {
-            return catalog.filter { !it.isCatalyst }.random(rng)
-        }
-        return pool.random(rng)
+        fun allowed(def: ItemDef) =
+            !disabled.contains(def.id) && !(def.isCatalyst && owned.any { it.id == def.id })
+
+        val pool = catalog.filter { it.tier == tier && allowed(it) }
+        if (pool.isNotEmpty()) return pool.random(rng)
+        // В тире всё выключено/собрано — берём из всего каталога.
+        val fallback = catalog.filter { !it.isCatalyst && allowed(it) }
+        if (fallback.isNotEmpty()) return fallback.random(rng)
+        return catalog.filter { !it.isCatalyst }.random(rng)
     }
 }

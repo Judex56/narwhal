@@ -94,9 +94,6 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
     val selectedWeapon: WeaponType
         get() = weaponTypes.firstOrNull { it.name == meta.selectedWeapon } ?: WeaponType.DART
 
-    val selectedItem: ItemDef?
-        get() = ItemPool.byId(meta.selectedItem)
-
     fun isTomeSelected(t: Tome) = meta.selectedTomes.contains(t.name)
 
     // ------------------------------------------------------------------
@@ -174,17 +171,16 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
 
     private fun tapItem(item: ItemDef) {
         if (meta.isDiscovered(item.id)) {
-            meta.selectedItem = if (meta.selectedItem == item.id) "" else item.id
-            meta.save()
-            val picked = meta.selectedItem == item.id
-            infoTitle = "${item.name} (${item.tier.label})" +
-                if (picked) " — взят в забег" else ""
-            infoColor = item.tier.color
+            // Тап переключает предмет в пуле выпадения.
+            val enabled = meta.toggleItem(item.id)
+            infoTitle = "${item.name} (${item.tier.label}) — " +
+                if (enabled) "ВКЛЮЧЁН: может выпасть из сундуков" else "ВЫКЛЮЧЕН: не будет выпадать"
+            infoColor = if (enabled) item.tier.color else Color.rgb(120, 144, 156)
             infoDesc = item.fullDesc
         } else {
             infoTitle = "${item.name} (${item.tier.label}) — ещё не найден"
             infoColor = Color.rgb(120, 144, 156)
-            infoDesc = "${item.fullDesc} • Найдите в сундуках во время забега, чтобы брать стартовым"
+            infoDesc = "${item.fullDesc} • Может выпасть из сундука в любой момент — так и открывается"
         }
     }
 

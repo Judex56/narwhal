@@ -94,9 +94,6 @@ class Game(
             tomes.clear()
         }
         player.weapons.add(WeaponInstance(menu.selectedWeapon))
-        menu.selectedItem?.let {
-            if (meta.isDiscovered(it.id)) player.items.add(it)
-        }
         // Выбранные фолианты стартуют на 1 уровне, дальше качаются на левел-апах.
         for (name in meta.selectedTomes) {
             val tome = Tome.entries.firstOrNull { it.name == name } ?: continue
@@ -697,7 +694,7 @@ class Game(
         }
         // Элита всегда оставляет предмет (бесплатно).
         if (e.type == EnemyType.ELITE) {
-            giveItem(ItemPool.roll(rng, minute, player.items))
+            giveItem(ItemPool.roll(rng, minute, player.items, meta.disabledItems))
         }
     }
 
@@ -922,7 +919,7 @@ class Game(
                             gold -= chestCost
                             chestsOpened++
                             obj.consumed = true
-                            giveItem(ItemPool.roll(rng, minute, player.items))
+                            giveItem(ItemPool.roll(rng, minute, player.items, meta.disabledItems))
                         } else if (chestHintTimer <= 0f) {
                             chestHintTimer = 1.5f
                             addText(

@@ -698,18 +698,18 @@ class Renderer(private val game: Game) {
             val r = menu.itemCellRect(i)
             if (r.bottom < menu.itemArea.top - 20f || r.top > menu.itemArea.bottom + 20f) continue
             val found = g.meta.isDiscovered(item.id)
-            val selected = g.meta.selectedItem == item.id
+            val enabled = g.meta.isEnabled(item.id)
 
-            fill.color = if (found) {
-                (item.tier.color and 0x00FFFFFF) or 0x55000000
-            } else {
-                0x22000000
+            fill.color = when {
+                found && enabled -> (item.tier.color and 0x00FFFFFF) or 0x55000000
+                found -> 0x33000000
+                else -> 0x22000000
             }
             canvas.drawRoundRect(r, 10f, 10f, fill)
-            stroke.strokeWidth = if (selected) 6f else 3f
+            stroke.strokeWidth = 3f
             stroke.color = when {
-                selected -> Color.WHITE
-                found -> item.tier.color
+                found && enabled -> item.tier.color
+                found -> (item.tier.color and 0x00FFFFFF) or 0x55000000
                 else -> (item.tier.color and 0x00FFFFFF) or 0x44000000
             }
             canvas.drawRoundRect(r, 10f, 10f, stroke)
@@ -717,8 +717,14 @@ class Renderer(private val game: Game) {
             text.textAlign = Paint.Align.CENTER
             text.textSize = 26f
             if (found) {
-                text.color = Color.WHITE
+                text.color = if (enabled) Color.WHITE else 0x77FFFFFF
                 canvas.drawText(item.name.take(2), r.centerX(), r.centerY() + 9f, text)
+                // Выключенный из пула — перечёркнут.
+                if (!enabled) {
+                    stroke.color = Color.rgb(239, 83, 80)
+                    stroke.strokeWidth = 4f
+                    canvas.drawLine(r.left + 14f, r.bottom - 14f, r.right - 14f, r.top + 14f, stroke)
+                }
             } else {
                 text.color = 0x66FFFFFF
                 canvas.drawText("?", r.centerX(), r.centerY() + 9f, text)
