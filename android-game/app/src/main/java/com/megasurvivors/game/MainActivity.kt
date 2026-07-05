@@ -12,7 +12,12 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        gameView = GameView(this)
+        val version = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "dev"
+        } catch (e: Exception) {
+            "dev"
+        }
+        gameView = GameView(this, version)
         setContentView(gameView)
         hideSystemUi()
     }

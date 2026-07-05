@@ -6,11 +6,13 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 
-class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback, Runnable {
+class GameView(context: Context, private val version: String) :
+    SurfaceView(context), SurfaceHolder.Callback, Runnable {
 
     private var thread: Thread? = null
     @Volatile private var running = false
 
+    private val meta = MetaStore(context)
     private var game: Game? = null
     private var renderer: Renderer? = null
     private val joystick = Joystick()
@@ -27,7 +29,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (game == null) {
-            game = Game(width.toFloat(), height.toFloat()).also {
+            game = Game(width.toFloat(), height.toFloat(), meta, version).also {
                 renderer = Renderer(it)
             }
         }

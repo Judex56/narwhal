@@ -11,8 +11,11 @@ android {
         applicationId = "com.megasurvivors.game"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        // Номер сборки приходит из CI: каждая сборка — новая версия,
+        // видная при установке и в меню игры.
+        val ciRun = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        versionCode = ciRun ?: 1
+        versionName = "0.2." + (ciRun?.toString() ?: "dev")
     }
 
     buildTypes {

@@ -25,10 +25,12 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             "mega-survivors-v0.2.${GITHUB_RUN_NUMBER}.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: mega-survivors-apk
-          path: android-game/app/build/outputs/apk/debug/app-debug.apk
+          name: mega-survivors-v0.2.${{ github.run_number }}
+          path: android-game/mega-survivors-v0.2.${{ github.run_number }}.apk
           retention-days: 30

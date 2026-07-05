@@ -15,7 +15,8 @@ class Player {
     val radius = 26f
 
     val weapons = ArrayList<WeaponInstance>()
-    val equipment = HashMap<Slot, Item>()
+    /** Собранные предметы (Megabonk-стиль: копятся списком). */
+    val items = ArrayList<ItemDef>()
     val buffs = ArrayList<Buff>()
     /** Бонусы от пассивных апгрейдов уровня. */
     val passives = HashMap<Stat, Float>()
@@ -25,7 +26,7 @@ class Player {
 
     fun bonus(stat: Stat): Float {
         var sum = passives[stat] ?: 0f
-        for (item in equipment.values) sum += item.stats[stat] ?: 0f
+        for (item in items) sum += item.stats[stat] ?: 0f
         for (buff in buffs) sum += buff.stats[stat] ?: 0f
         return sum
     }
@@ -44,6 +45,9 @@ class Player {
         val armor = bonus(Stat.ARMOR)
         return dmg / (1f + armor * 1.5f)
     }
+
+    fun hasSpecial(s: Special): Boolean = items.any { it.special == s }
+    fun countSpecial(s: Special): Int = items.count { it.special == s }
 }
 
 enum class EnemyType(
@@ -52,27 +56,52 @@ enum class EnemyType(
     val damage: Float,
     val radius: Float,
     val xp: Float,
+    val gold: Int,
     val color: Int,
 ) {
-    WALKER(22f, 95f, 8f, 22f, 1f, Color.rgb(141, 110, 99)),
-    RUNNER(14f, 185f, 6f, 17f, 1.5f, Color.rgb(255, 112, 67)),
-    TANK(90f, 60f, 16f, 34f, 4f, Color.rgb(84, 110, 122)),
-    BRUTE(45f, 110f, 12f, 27f, 2.5f, Color.rgb(124, 179, 66)),
-    ELITE(600f, 85f, 24f, 48f, 25f, Color.rgb(255, 213, 79)),
+    WALKER(22f, 95f, 8f, 22f, 1f, 1, Color.rgb(141, 110, 99)),
+    RUNNER(14f, 185f, 6f, 17f, 1.5f, 1, Color.rgb(255, 112, 67)),
+    TANK(90f, 60f, 16f, 34f, 4f, 3, Color.rgb(84, 110, 122)),
+    BRUTE(45f, 110f, 12f, 27f, 2.5f, 2, Color.rgb(124, 179, 66)),
+    ELITE(600f, 85f, 24f, 48f, 25f, 30, Color.rgb(255, 213, 79)),
 }
 
 class Enemy(val type: EnemyType, var x: Float, var y: Float, hpScale: Float, val dmgScale: Float) {
     var hp = type.hp * hpScale
     val maxHp = hp
     var hitFlash = 0f
-    // Таймеры получения периодического урона (аура, орбита).
-    var auraTick = 0f
+
+    // Таймеры получения периодического урона от разных источников.
+    var fireTick = 0f
+    var frostTick = 0f
     var orbitTick = 0f
+    var scytheTick = 0f
+    var bananaTick = 0f
+    var plagueTick = 0f
+
+    // Дебаффы.
+    var slowTimer = 0f
+    var slowMult = 1f
+    var freezeTimer = 0f
+    var poisonStacks = 0
+    var poisonTimer = 0f
+    var poisonDps = 0f
+    var poisonAcc = 0f
+
     var knockX = 0f
     var knockY = 0f
 
     val damage: Float get() = type.damage * dmgScale
+
+    val effectiveSpeed: Float
+        get() = when {
+            freezeTimer > 0f -> 0f
+            slowTimer > 0f -> type.speed * slowMult
+            else -> type.speed
+        }
 }
+
+enum class ProjKind { DART, POISON, BANANA, PELLET, SLASH }
 
 class Projectile(
     var x: Float,
@@ -83,14 +112,29 @@ class Projectile(
     val radius: Float,
     var pierce: Int,
     var life: Float = 1.6f,
+    val kind: ProjKind = ProjKind.DART,
     val color: Int = Color.rgb(129, 212, 250),
-)
+) {
+    /** Для банана: возраст и фаза возврата. */
+    var age = 0f
+    var returning = false
+}
 
-enum class PickupType { XP, HP }
+/** Отложенный взрыв (метеоры): падает delay сек, потом бахает. */
+class Boom(
+    var x: Float,
+    var y: Float,
+    var delay: Float,
+    val radius: Float,
+    val damage: Float,
+) {
+    var exploded = false
+    var flash = 0f // остаток визуальной вспышки после взрыва
+}
+
+enum class PickupType { XP, HP, GOLD }
 
 class Pickup(val type: PickupType, var x: Float, var y: Float, val value: Float) {
-    var vx = 0f
-    var vy = 0f
     var magnetized = false
 }
 

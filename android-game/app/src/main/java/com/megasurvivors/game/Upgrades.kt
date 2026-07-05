@@ -23,27 +23,35 @@ object UpgradePool {
         PassiveDef(Stat.MAGNET, 0.25f, "Магнит", "+25% к радиусу сбора"),
         PassiveDef(Stat.AREA, 0.10f, "Размах", "+10% к области атак"),
         PassiveDef(Stat.XP_GAIN, 0.12f, "Мудрость", "+12% к опыту"),
+        PassiveDef(Stat.CRIT_CHANCE, 0.05f, "Меткость", "+5% к шансу крита"),
+        PassiveDef(Stat.GOLD_GAIN, 0.15f, "Алчность", "+15% к золоту"),
     )
 
-    /** Собрать 3 случайных варианта для экрана левел-апа. */
-    fun rollOptions(player: Player, rng: Random): List<UpgradeOption> {
+    /**
+     * Собрать 3 случайных варианта. Новые оружия предлагаются только
+     * из открытых игроком в меню ([unlockedWeapons]).
+     */
+    fun rollOptions(player: Player, rng: Random, unlockedWeapons: Set<String>): List<UpgradeOption> {
         val options = ArrayList<UpgradeOption>()
 
-        // Апгрейды имеющегося оружия.
+        // Апгрейды имеющегося оружия — добавляем дважды, чтобы
+        // качать оружие было проще, чем набирать пассивки.
         for (w in player.weapons) {
-            if (w.level < MAX_WEAPON_LEVEL) {
-                options.add(
-                    UpgradeOption(
-                        "${w.type.label} ур. ${w.level + 1}",
-                        WeaponBalance.levelUpText(w.type, w.level + 1),
-                        w.type.color,
-                    ) { p -> p.weapons.first { it.type == w.type }.level++ },
-                )
+            if (w.level < MAX_WEAPON_LEVEL && !w.type.evolved) {
+                val opt = UpgradeOption(
+                    "${w.type.label} ур. ${w.level + 1}",
+                    WeaponBalance.levelUpText(w.type, w.level + 1),
+                    w.type.color,
+                ) { p -> p.weapons.first { it.type == w.type }.level++ }
+                options.add(opt)
+                options.add(opt)
             }
         }
-        // Новое оружие (максимум 4 слота).
+        // Новое оружие (максимум 4 слота) — только из открытых.
         if (player.weapons.size < 4) {
             for (type in WeaponType.entries) {
+                if (type.evolved) continue
+                if (!unlockedWeapons.contains(type.name)) continue
                 if (player.weapons.none { it.type == type }) {
                     options.add(
                         UpgradeOption("НОВОЕ: ${type.label}", type.desc, type.color) { p ->
@@ -64,6 +72,8 @@ object UpgradePool {
         }
 
         options.shuffle(rng)
-        return options.take(3)
+        // Убираем дубли одинаковых заголовков в выдаче.
+        val seen = HashSet<String>()
+        return options.filter { seen.add(it.title) }.take(3)
     }
 }

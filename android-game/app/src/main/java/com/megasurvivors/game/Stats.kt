@@ -10,7 +10,10 @@ enum class Stat(val label: String) {
     MAGNET("Радиус сбора"),
     AREA("Область атак"),
     PROJ_SPEED("Скорость снарядов"),
-    XP_GAIN("Опыт");
+    XP_GAIN("Опыт"),
+    CRIT_CHANCE("Шанс крита"),
+    CRIT_DMG("Урон крита"),
+    GOLD_GAIN("Золото");
 }
 
 /**
