@@ -152,6 +152,71 @@ object WeaponBalance {
     const val REAPER_SPEED = 4.5f
     const val REAPER_BLADES = 2
 
+    private fun f(v: Float): String = "%.2f".format(v).trimEnd('0').trimEnd('.')
+
+    /**
+     * Читабельное описание апгрейда: что и насколько изменится
+     * при переходе с уровня [from] на [from]+1.
+     */
+    fun upgradeDesc(type: WeaponType, from: Int): String {
+        val to = from + 1
+        return when (type) {
+            WeaponType.DART ->
+                "Урон ${dartDamage(from).toInt()} → ${dartDamage(to).toInt()}" +
+                    " • Снарядов ${dartCount(from)} → ${dartCount(to)}" +
+                    " • Перезарядка ${f(dartCooldown(from))}с → ${f(dartCooldown(to))}с"
+            WeaponType.ORBIT ->
+                "Урон ${orbitDamage(from).toInt()} → ${orbitDamage(to).toInt()}" +
+                    " • Клинков ${orbitCount(from)} → ${orbitCount(to)}" +
+                    " • Радиус ${orbitRadius(from).toInt()} → ${orbitRadius(to).toInt()}"
+            WeaponType.AURA ->
+                "Урон ${auraDamage(from).toInt()} → ${auraDamage(to).toInt()} каждые 0.5с" +
+                    " • Радиус ${auraRadius(from).toInt()} → ${auraRadius(to).toInt()}"
+            WeaponType.LIGHTNING ->
+                "Урон ${lightningDamage(from).toInt()} → ${lightningDamage(to).toInt()}" +
+                    " • Целей ${lightningTargets(from)} → ${lightningTargets(to)}" +
+                    " • Перезарядка ${f(lightningCooldown(from))}с → ${f(lightningCooldown(to))}с"
+            WeaponType.SCYTHE ->
+                "Урон ${scytheDamage(from).toInt()} → ${scytheDamage(to).toInt()}" +
+                    " • Радиус ${scytheRadius(from).toInt()} → ${scytheRadius(to).toInt()}" +
+                    " • Скорость вращения выше"
+            WeaponType.FROST_AURA ->
+                "Урон ${frostDamage(from).toInt()} → ${frostDamage(to).toInt()} каждые 0.5с" +
+                    " • Радиус ${frostRadius(from).toInt()} → ${frostRadius(to).toInt()}" +
+                    " • Замедление ${100 - (frostSlow(from) * 100).toInt()}% → ${100 - (frostSlow(to) * 100).toInt()}%"
+            WeaponType.COUNTER_SPIN ->
+                "Урон ${spinDamage(from).toInt()} → ${spinDamage(to).toInt()}" +
+                    " • Радиус ${spinRadius(from).toInt()} → ${spinRadius(to).toInt()}" +
+                    " • Перезарядка ${f(spinCooldown(from))}с → ${f(spinCooldown(to))}с"
+            WeaponType.POISON ->
+                "Яд ${poisonDps(from).toInt()} → ${poisonDps(to).toInt()} урона/с за стак (макс. 5 стаков)" +
+                    " • Ножей ${poisonCount(from)} → ${poisonCount(to)}"
+            WeaponType.NUKE ->
+                "Урон ${nukeDamage(from).toInt()} → ${nukeDamage(to).toInt()} по всему экрану" +
+                    " • Перезарядка ${nukeCooldown(from).toInt()}с → ${nukeCooldown(to).toInt()}с"
+            WeaponType.BANANA ->
+                "Урон ${bananaDamage(from).toInt()} → ${bananaDamage(to).toInt()} (бьёт туда и обратно)" +
+                    " • Бананов ${bananaCount(from)} → ${bananaCount(to)}"
+            WeaponType.PSI_BLADES ->
+                "Урон ${psiDamage(from).toInt()} → ${psiDamage(to).toInt()} всем на линии" +
+                    " • Длина ${psiLength(from).toInt()} → ${psiLength(to).toInt()}" +
+                    " • Ширина ${psiWidth(from).toInt()} → ${psiWidth(to).toInt()}"
+            WeaponType.METEOR ->
+                "Урон ${meteorDamage(from).toInt()} → ${meteorDamage(to).toInt()} за взрыв" +
+                    " • Метеоров ${meteorCount(from)} → ${meteorCount(to)}" +
+                    " • Радиус взрыва ${meteorRadius(from).toInt()} → ${meteorRadius(to).toInt()}"
+            WeaponType.SHOTGUN ->
+                "Урон ${shotgunDamage(from).toInt()} → ${shotgunDamage(to).toInt()} за дробину" +
+                    " • Дроби ${shotgunPellets(from)} → ${shotgunPellets(to)}" +
+                    " • Перезарядка ${f(shotgunCooldown(from))}с → ${f(shotgunCooldown(to))}с"
+            WeaponType.GREED_BLADE ->
+                "База ${greedDamage(from, 0).toInt()} → ${greedDamage(to, 0).toInt()}" +
+                    " • +0.4 урона за каждое убийство (без предела)" +
+                    " • Перезарядка ${f(greedCooldown(from))}с → ${f(greedCooldown(to))}с"
+            else -> ""
+        }
+    }
+
     fun levelUpText(type: WeaponType, l: Int): String = when (type) {
         WeaponType.DART -> "Урон ${dartDamage(l).toInt()}, снарядов ${dartCount(l)}"
         WeaponType.ORBIT -> "Урон ${orbitDamage(l).toInt()}, клинков ${orbitCount(l)}"

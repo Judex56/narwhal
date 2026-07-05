@@ -18,14 +18,15 @@ class Player {
     /** Собранные предметы (Megabonk-стиль: копятся списком). */
     val items = ArrayList<ItemDef>()
     val buffs = ArrayList<Buff>()
-    /** Бонусы от пассивных апгрейдов уровня. */
-    val passives = HashMap<Stat, Float>()
+    /** Уровни фолиантов (качаются на левел-апах вместе с оружием). */
+    val tomes = HashMap<Tome, Int>()
 
     private val baseSpeed = 230f
     private val baseMaxHp = 100f
 
     fun bonus(stat: Stat): Float {
-        var sum = passives[stat] ?: 0f
+        var sum = 0f
+        for ((tome, lvl) in tomes) sum += (tome.stats[stat] ?: 0f) * lvl
         for (item in items) sum += item.stats[stat] ?: 0f
         for (buff in buffs) sum += buff.stats[stat] ?: 0f
         return sum

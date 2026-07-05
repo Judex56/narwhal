@@ -55,8 +55,18 @@ class Game(
     val optionRects = ArrayList<RectF>()
     val pauseRect = RectF(screenW - 110f, 20f, screenW - 20f, 110f)
 
+    var revivesUsed = 0
+
     val minute: Int get() = (time / 60f).toInt()
-    val chestCost: Int get() = 25 + 15 * chestsOpened
+
+    /** Цена сундука растёт с каждым открытым; Отмычка и Идол дают скидку. */
+    val chestCost: Int
+        get() {
+            val base = 25f + 15f * chestsOpened
+            val discount = (1f - 0.15f * player.countSpecial(Special.CHEST_DISCOUNT))
+                .coerceAtLeast(0.4f)
+            return (base * discount).toInt()
+        }
 
     // ------------------------------------------------------------------
     // Запуск и завершение забега.
@@ -81,15 +91,19 @@ class Game(
             weapons.clear()
             items.clear()
             buffs.clear()
-            passives.clear()
+            tomes.clear()
         }
         player.weapons.add(WeaponInstance(menu.selectedWeapon))
-        menu.selectedItem?.let { player.items.add(it) }
+        menu.selectedItem?.let {
+            if (meta.isDiscovered(it.id)) player.items.add(it)
+        }
+        // Выбранные фолианты стартуют на 1 уровне, дальше качаются на левел-апах.
         for (name in meta.selectedTomes) {
             val tome = Tome.entries.firstOrNull { it.name == name } ?: continue
-            player.buffs.add(Buff(tome.label, tome.stats, Float.POSITIVE_INFINITY, tome.color))
+            player.tomes[tome] = 1
         }
         player.hp = player.maxHp
+        revivesUsed = 0
 
         time = 0f
         kills = 0
@@ -135,7 +149,20 @@ class Game(
         if (chestHintTimer > 0f) chestHintTimer -= dt
 
         if (player.hp <= 0f) {
-            state = GameState.GAME_OVER
+            // Перо феникса: одно воскрешение за забег на каждый экземпляр.
+            if (player.countSpecial(Special.REVIVE) > revivesUsed) {
+                revivesUsed++
+                player.hp = player.maxHp * 0.5f
+                player.iFrames = 2f
+                for (e in enemies) {
+                    val d = dist(player.x, player.y, e.x, e.y).coerceAtLeast(1f)
+                    e.knockX = (e.x - player.x) / d * 900f
+                    e.knockY = (e.y - player.y) / d * 900f
+                }
+                addText(player.x, player.y - 120f, "ВОСКРЕШЕНИЕ!", Color.rgb(255, 171, 64), 46f, 2f)
+            } else {
+                state = GameState.GAME_OVER
+            }
         }
     }
 
@@ -158,7 +185,7 @@ class Game(
     }
 
     /** Весь входящий урон по игроку проходит здесь. */
-    private fun damagePlayer(raw: Float) {
+    private fun damagePlayer(raw: Float, attacker: Enemy? = null) {
         if (player.iFrames > 0f) return
         if (player.hasSpecial(Special.DODGE) && rng.nextFloat() < 0.10f) {
             addText(player.x, player.y - 44f, "уклон!", Color.rgb(178, 235, 242), 26f)
@@ -169,6 +196,12 @@ class Game(
         player.hp -= dmg
         player.iFrames = 0.5f
         addText(player.x, player.y - 40f, "-${dmg.toInt()}", Color.rgb(255, 82, 82), 30f)
+
+        // Шипы: атакующий получает половину своего урона за каждый предмет.
+        val thorns = player.countSpecial(Special.THORNS)
+        if (thorns > 0 && attacker != null) {
+            hitEnemy(attacker, raw * 0.5f * thorns, knockFrom = player, canCrit = false)
+        }
 
         // Ответный вихрь (Axe): контратака при получении урона.
         for (w in player.weapons) {
@@ -641,7 +674,7 @@ class Game(
             if (e.freezeTimer > 0f) e.freezeTimer -= dt
 
             if (dist(e.x, e.y, player.x, player.y) < e.type.radius + player.radius) {
-                damagePlayer(e.damage)
+                damagePlayer(e.damage, attacker = e)
             }
             i--
         }
@@ -908,7 +941,7 @@ class Game(
                 is Shrine -> {
                     val inside = dist(player.x, player.y, obj.x, obj.y) < obj.radius
                     if (inside) {
-                        obj.progress += dt / obj.captureTime
+                        obj.progress += dt / obj.captureTime * captureSpeed()
                         if (obj.progress >= 1f) {
                             obj.consumed = true
                             captureShrine(obj)
@@ -920,7 +953,7 @@ class Game(
                 is Statue -> {
                     val inside = dist(player.x, player.y, obj.x, obj.y) < obj.radius
                     if (inside) {
-                        obj.progress += dt / obj.captureTime
+                        obj.progress += dt / obj.captureTime * captureSpeed()
                         if (obj.progress >= 1f) {
                             obj.consumed = true
                             captureStatue(obj)
@@ -952,8 +985,13 @@ class Game(
         addText(s.x, s.y - 100f, "+5% ко всем навыкам (навсегда)", Color.rgb(178, 223, 219), 34f, 2.2f)
     }
 
+    /** Знамёна ускоряют захват точек. */
+    private fun captureSpeed(): Float =
+        1f + 0.3f * player.countSpecial(Special.CAPTURE_SPEED)
+
     private fun giveItem(item: ItemDef) {
         player.items.add(item)
+        meta.discover(item.id)
         popupItem = item
         state = GameState.ITEM_POPUP
         checkEvolutions()
@@ -1009,9 +1047,9 @@ class Game(
     // ------------------------------------------------------------------
     fun handleTap(x: Float, y: Float) {
         when (state) {
-            GameState.MENU -> {
-                if (menu.handleTap(x, y)) startRun()
-            }
+            // Меню обрабатывается в GameView через touchDown/Move/Up
+            // (там нужен скролл списка предметов).
+            GameState.MENU -> Unit
             GameState.LEVEL_UP -> {
                 for (i in optionRects.indices) {
                     if (optionRects[i].contains(x, y)) {

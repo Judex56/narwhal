@@ -632,7 +632,6 @@ class Renderer(private val game: Game) {
             40f, 120f, text,
         )
 
-        // Золото справа сверху.
         text.textAlign = Paint.Align.RIGHT
         text.color = Color.rgb(255, 213, 79)
         text.textSize = 40f
@@ -640,22 +639,23 @@ class Renderer(private val game: Game) {
 
         // Заголовки колонок.
         text.textAlign = Paint.Align.LEFT
-        text.textSize = 28f
+        text.textSize = 26f
         text.color = Color.WHITE
-        if (menu.weaponCells.isNotEmpty()) {
-            canvas.drawText("ОРУЖИЕ", menu.weaponCells[0].rect.left, 158f, text)
-        }
-        if (menu.itemCells.isNotEmpty()) {
-            canvas.drawText("ПРЕДМЕТ", menu.itemCells[0].rect.left, 158f, text)
-        }
-        if (menu.tomeCells.isNotEmpty()) {
-            canvas.drawText("ФОЛИАНТЫ (${g.meta.selectedTomes.size}/$MAX_TOMES)", menu.tomeCells[0].rect.left, 158f, text)
-        }
+        canvas.drawText("ОРУЖИЕ", menu.weaponCells[0].left, 158f, text)
+        val discovered = menu.allItems.count { g.meta.isDiscovered(it.id) }
+        canvas.drawText(
+            "ПРЕДМЕТЫ ($discovered/${menu.allItems.size})",
+            menu.itemArea.left, 158f, text,
+        )
+        canvas.drawText(
+            "ФОЛИАНТЫ (${g.meta.selectedTomes.size}/$MAX_TOMES)",
+            menu.tomeCells[0].left, 158f, text,
+        )
 
-        // Оружие.
+        // --- Оружие ---
         for (i in menu.weaponCells.indices) {
             val type = menu.weaponTypes[i]
-            val r = menu.weaponCells[i].rect
+            val r = menu.weaponCells[i]
             val unlocked = g.meta.isUnlocked(type)
             val selected = g.meta.selectedWeapon == type.name
 
@@ -674,43 +674,76 @@ class Renderer(private val game: Game) {
             canvas.drawRoundRect(r, 12f, 12f, stroke)
 
             text.textAlign = Paint.Align.CENTER
-            text.textSize = 30f
+            text.textSize = 28f
             text.color = if (unlocked) Color.WHITE else 0x77FFFFFF
-            canvas.drawText(type.code, r.centerX(), r.centerY() + 10f, text)
-
-            text.textSize = 17f
-            text.color = if (unlocked) Color.rgb(207, 216, 220) else Color.rgb(120, 144, 156)
-            canvas.drawText(type.label, r.centerX(), r.bottom + 20f, text)
+            canvas.drawText(type.code, r.centerX(), r.centerY() + if (unlocked) 10f else -6f, text)
             if (!unlocked) {
                 text.color = Color.rgb(255, 213, 79)
                 text.textSize = 20f
-                canvas.drawText("${type.price}з", r.centerX(), r.centerY() + 42f, text)
+                canvas.drawText("${type.price}з", r.centerX(), r.centerY() + 34f, text)
             }
+            text.textSize = 16f
+            text.color = if (unlocked) Color.rgb(207, 216, 220) else Color.rgb(120, 144, 156)
+            canvas.drawText(type.label, r.centerX(), r.bottom + 19f, text)
         }
 
-        // Предметы.
-        for (i in menu.itemCells.indices) {
-            val item = menu.startItems[i]
-            val r = menu.itemCells[i].rect
+        // --- Предметы (скроллируемый полный каталог) ---
+        canvas.save()
+        canvas.clipRect(
+            menu.itemArea.left - 6f, menu.itemArea.top - 6f,
+            menu.itemArea.right + 6f, menu.itemArea.bottom + 6f,
+        )
+        for (i in menu.allItems.indices) {
+            val item = menu.allItems[i]
+            val r = menu.itemCellRect(i)
+            if (r.bottom < menu.itemArea.top - 20f || r.top > menu.itemArea.bottom + 20f) continue
+            val found = g.meta.isDiscovered(item.id)
             val selected = g.meta.selectedItem == item.id
-            fill.color = (item.tier.color and 0x00FFFFFF) or 0x55000000
-            canvas.drawRoundRect(r, 12f, 12f, fill)
+
+            fill.color = if (found) {
+                (item.tier.color and 0x00FFFFFF) or 0x55000000
+            } else {
+                0x22000000
+            }
+            canvas.drawRoundRect(r, 10f, 10f, fill)
             stroke.strokeWidth = if (selected) 6f else 3f
-            stroke.color = if (selected) Color.WHITE else item.tier.color
-            canvas.drawRoundRect(r, 12f, 12f, stroke)
+            stroke.color = when {
+                selected -> Color.WHITE
+                found -> item.tier.color
+                else -> (item.tier.color and 0x00FFFFFF) or 0x44000000
+            }
+            canvas.drawRoundRect(r, 10f, 10f, stroke)
+
             text.textAlign = Paint.Align.CENTER
             text.textSize = 26f
-            text.color = Color.WHITE
-            canvas.drawText(item.name.take(2), r.centerX(), r.centerY() + 9f, text)
-            text.textSize = 16f
-            text.color = Color.rgb(207, 216, 220)
-            canvas.drawText(item.name, r.centerX(), r.bottom + 20f, text)
+            if (found) {
+                text.color = Color.WHITE
+                canvas.drawText(item.name.take(2), r.centerX(), r.centerY() + 9f, text)
+            } else {
+                text.color = 0x66FFFFFF
+                canvas.drawText("?", r.centerX(), r.centerY() + 9f, text)
+            }
+        }
+        canvas.restore()
+        // Полоса прокрутки.
+        val contentH = ((menu.allItems.size + menu.itemCols - 1) / menu.itemCols) * (menu.cell + menu.gap)
+        if (contentH > menu.itemArea.height()) {
+            val frac = menu.itemArea.height() / contentH
+            val barH = menu.itemArea.height() * frac
+            val barY = menu.itemArea.top +
+                (menu.itemScroll / (contentH - menu.itemArea.height())) *
+                (menu.itemArea.height() - barH)
+            fill.color = 0x55FFFFFF
+            canvas.drawRoundRect(
+                RectF(menu.itemArea.right + 10f, barY, menu.itemArea.right + 16f, barY + barH),
+                3f, 3f, fill,
+            )
         }
 
-        // Фолианты.
+        // --- Фолианты ---
         for (i in menu.tomeCells.indices) {
             val tome = menu.tomes[i]
-            val r = menu.tomeCells[i].rect
+            val r = menu.tomeCells[i]
             val selected = menu.isTomeSelected(tome)
             fill.color = (tome.color and 0x00FFFFFF) or 0x55000000
             canvas.drawRoundRect(r, 12f, 12f, fill)
@@ -720,17 +753,46 @@ class Renderer(private val game: Game) {
             text.textAlign = Paint.Align.CENTER
             text.textSize = 26f
             text.color = Color.WHITE
-            canvas.drawText(tome.label.takeLast(tome.label.length - 8).take(2).uppercase(), r.centerX(), r.centerY() + 9f, text)
+            canvas.drawText(
+                tome.label.removePrefix("Фолиант ").take(2).uppercase(),
+                r.centerX(), r.centerY() + 9f, text,
+            )
             text.textSize = 15f
             text.color = Color.rgb(207, 216, 220)
-            canvas.drawText(tome.desc, r.centerX(), r.bottom + 20f, text)
+            canvas.drawText(tome.label.removePrefix("Фолиант "), r.centerX(), r.bottom + 19f, text)
         }
 
-        // Инфо-строка.
-        text.textAlign = Paint.Align.CENTER
-        text.textSize = 24f
-        text.color = Color.rgb(176, 190, 197)
-        canvas.drawText(menu.infoText, g.screenW / 2f, menu.startRect.top - 26f, text)
+        // --- Инфо-панель: название + понятное описание ---
+        fill.color = 0x44000000
+        canvas.drawRoundRect(menu.infoArea, 12f, 12f, fill)
+        text.textAlign = Paint.Align.LEFT
+        text.textSize = 26f
+        text.color = menu.infoColor
+        canvas.drawText(menu.infoTitle, menu.infoArea.left + 20f, menu.infoArea.top + 38f, text)
+        if (menu.infoDesc.isNotEmpty()) {
+            text.textSize = 22f
+            text.color = Color.rgb(207, 216, 220)
+            var line1 = menu.infoDesc
+            var line2 = ""
+            val maxW = menu.infoArea.width() - 40f
+            if (text.measureText(line1) > maxW) {
+                // Простое деление на две строки по словам.
+                val words = menu.infoDesc.split(" ")
+                line1 = ""
+                for (w in words) {
+                    val cand = if (line1.isEmpty()) w else "$line1 $w"
+                    if (text.measureText(cand) > maxW) {
+                        line2 = menu.infoDesc.removePrefix(line1).trim()
+                        break
+                    }
+                    line1 = cand
+                }
+            }
+            canvas.drawText(line1, menu.infoArea.left + 20f, menu.infoArea.top + 70f, text)
+            if (line2.isNotEmpty()) {
+                canvas.drawText(line2, menu.infoArea.left + 20f, menu.infoArea.top + 96f, text)
+            }
+        }
 
         // Кнопка старта.
         fill.color = Color.rgb(46, 125, 50)
@@ -738,6 +800,7 @@ class Renderer(private val game: Game) {
         stroke.color = Color.rgb(129, 199, 132)
         stroke.strokeWidth = 4f
         canvas.drawRoundRect(menu.startRect, 18f, 18f, stroke)
+        text.textAlign = Paint.Align.CENTER
         text.color = Color.WHITE
         text.textSize = 44f
         canvas.drawText("В БОЙ!", menu.startRect.centerX(), menu.startRect.centerY() + 15f, text)
@@ -768,14 +831,20 @@ class Renderer(private val game: Game) {
             canvas.drawRoundRect(r, 18f, 18f, stroke)
 
             fill.color = opt.color
-            canvas.drawCircle(r.centerX(), r.top + 90f, 36f, fill)
+            canvas.drawCircle(r.centerX(), r.top + 70f, 32f, fill)
 
             text.color = Color.WHITE
-            text.textSize = 32f
-            drawWrapped(canvas, opt.title, r.centerX(), r.top + 180f, r.width() - 40f)
-            text.color = Color.rgb(176, 190, 197)
-            text.textSize = 26f
-            drawWrapped(canvas, opt.desc, r.centerX(), r.top + 260f, r.width() - 40f)
+            text.textSize = 30f
+            drawWrapped(canvas, opt.title, r.centerX(), r.top + 140f, r.width() - 36f)
+
+            // Описание: каждый пункт "что изменится" с новой строки.
+            text.color = Color.rgb(207, 216, 220)
+            text.textSize = 24f
+            var y = r.top + 225f
+            for (part in opt.desc.split(" • ")) {
+                drawWrapped(canvas, part, r.centerX(), y, r.width() - 36f)
+                y += if (text.measureText(part) > r.width() - 36f) 66f else 38f
+            }
         }
     }
 
@@ -809,11 +878,11 @@ class Renderer(private val game: Game) {
             canvas.drawText("+${(v * 100).toInt()}% ${stat.label}", r.centerX(), y, text)
             y += 44f
         }
-        if (item.desc.isNotEmpty()) {
+        if (item.special != Special.NONE) {
             text.color = Color.rgb(255, 213, 79)
             text.textSize = 25f
             y += 12f
-            drawWrapped(canvas, item.desc, r.centerX(), y, r.width() - 60f)
+            drawWrapped(canvas, item.special.text, r.centerX(), y, r.width() - 60f)
         }
 
         text.color = Color.rgb(255, 213, 79)

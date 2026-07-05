@@ -80,6 +80,18 @@ class GameView(context: Context, private val version: String) :
         val x = event.getX(index)
         val y = event.getY(index)
 
+        // Меню обрабатывается отдельно: там есть скролл списка предметов.
+        if (g.state == GameState.MENU) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> g.menu.touchDown(x, y)
+                MotionEvent.ACTION_MOVE -> g.menu.touchMove(event.x, event.y)
+                MotionEvent.ACTION_UP -> {
+                    if (g.menu.touchUp(event.x, event.y)) g.startRun()
+                }
+            }
+            return true
+        }
+
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (g.state == GameState.RUNNING) {

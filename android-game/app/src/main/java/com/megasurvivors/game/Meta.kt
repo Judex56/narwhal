@@ -25,7 +25,17 @@ class MetaStore(context: Context) {
     val selectedTomes: MutableSet<String> =
         (prefs.getStringSet("sel_tomes", null) ?: emptySet()).toMutableSet()
 
+    /** Найденные предметы: только их можно брать стартовыми. */
+    val discoveredItems: MutableSet<String> =
+        (prefs.getStringSet("discovered", null) ?: ItemPool.defaultDiscovered).toMutableSet()
+
     var bestTime: Int = prefs.getInt("best_time", 0)
+
+    fun isDiscovered(id: String): Boolean = discoveredItems.contains(id)
+
+    fun discover(id: String) {
+        if (discoveredItems.add(id)) save()
+    }
 
     fun save() {
         prefs.edit()
@@ -34,6 +44,7 @@ class MetaStore(context: Context) {
             .putString("sel_weapon", selectedWeapon)
             .putString("sel_item", selectedItem)
             .putStringSet("sel_tomes", selectedTomes)
+            .putStringSet("discovered", discoveredItems)
             .putInt("best_time", bestTime)
             .apply()
     }
