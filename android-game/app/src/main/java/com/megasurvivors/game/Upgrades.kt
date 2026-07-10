@@ -22,31 +22,29 @@ object UpgradePool {
         // Прокачка имеющегося оружия — двойной вес, чтобы оружие
         // предлагалось чаще фолиантов.
         for (w in player.weapons) {
-            if (w.level < MAX_WEAPON_LEVEL && !w.type.evolved) {
+            if (w.level < MAX_WEAPON_LEVEL) {
                 val opt = UpgradeOption(
-                    "${w.type.label}: ур. ${w.level} → ${w.level + 1}",
+                    "${w.displayName}: ур. ${w.level} → ${w.level + 1}",
                     WeaponBalance.upgradeDesc(w.type, w.level),
-                    w.type.color,
+                    w.displayColor,
                 ) { p -> p.weapons.first { it.type == w.type }.level++ }
                 options.add(opt)
                 options.add(opt)
             }
         }
 
-        // Новое оружие (максимум 4 слота) — только из открытых в меню.
-        if (player.weapons.size < 4) {
-            for (type in WeaponType.entries) {
-                if (type.evolved) continue
-                if (!unlockedWeapons.contains(type.name)) continue
-                if (player.weapons.none { it.type == type }) {
-                    options.add(
-                        UpgradeOption(
-                            "НОВОЕ ОРУЖИЕ: ${type.label}",
-                            "${type.desc} • ${WeaponBalance.levelUpText(type, 1)}",
-                            type.color,
-                        ) { p -> p.weapons.add(WeaponInstance(type)) },
-                    )
-                }
+        // Новое оружие — лимита на количество больше нет,
+        // предлагаются все открытые в меню.
+        for (type in WeaponType.entries) {
+            if (!unlockedWeapons.contains(type.name)) continue
+            if (player.weapons.none { it.type == type }) {
+                options.add(
+                    UpgradeOption(
+                        "НОВОЕ ОРУЖИЕ: ${type.label}",
+                        "${type.desc} • ${WeaponBalance.levelUpText(type, 1)}",
+                        type.color,
+                    ) { p -> p.weapons.add(WeaponInstance(type)) },
+                )
             }
         }
 

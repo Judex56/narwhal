@@ -11,9 +11,10 @@ import kotlin.math.abs
  */
 class Menu(private val screenW: Float, private val screenH: Float, val meta: MetaStore) {
 
-    val weaponTypes: List<WeaponType> = WeaponType.entries.filter { !it.evolved }
+    val weaponTypes: List<WeaponType> = WeaponType.entries.toList()
     val allItems: List<ItemDef> = ItemPool.catalog
     val tomes: List<Tome> = Tome.entries.toList()
+    val levelCells = ArrayList<RectF>()
 
     val cell = 110f
     val gap = 12f
@@ -59,7 +60,7 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
         itemArea = RectF(
             iLeft, top,
             iLeft + itemCols * (cell + gap) - gap,
-            screenH - 280f,
+            screenH - 350f,
         )
         val rows = (allItems.size + itemCols - 1) / itemCols
         itemContentHeight = rows * itemRowPitch - gap
@@ -71,6 +72,17 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
             val x = tLeft + col * (cell + gap)
             val y = top + row * rowPitch
             tomeCells.add(RectF(x, y, x + cell, y + cell))
+        }
+
+        // Селектор уровней (этажей) — ряд по центру над инфо-панелью.
+        val lvlCell = 62f
+        val lvlGap = 12f
+        val totalLvlW = LEVELS.size * lvlCell + (LEVELS.size - 1) * lvlGap
+        val lvlLeft = (screenW - totalLvlW) / 2f
+        val lvlTop = screenH - 336f
+        for (i in LEVELS.indices) {
+            val x = lvlLeft + i * (lvlCell + lvlGap)
+            levelCells.add(RectF(x, lvlTop, x + lvlCell, lvlTop + lvlCell))
         }
 
         infoArea = RectF(40f, screenH - 262f, screenW - 40f, screenH - 160f)
@@ -145,7 +157,28 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
                 return false
             }
         }
+        for (i in levelCells.indices) {
+            if (levelCells[i].contains(x, y)) {
+                tapLevel(LEVELS[i])
+                return false
+            }
+        }
         return false
+    }
+
+    private fun tapLevel(def: LevelDef) {
+        if (def.index <= meta.unlockedLevel) {
+            meta.selectedLevel = def.index
+            meta.save()
+            infoTitle = "Уровень ${def.index}: ${def.name}"
+            infoColor = def.bossColor
+            infoDesc = "HP врагов ×${"%.1f".format(def.hpMult)}, урон ×${"%.1f".format(def.dmgMult)}" +
+                " • Босс на 15:00 — ${def.bossName} • Убейте босса, чтобы открыть следующий уровень"
+        } else {
+            infoTitle = "Уровень ${def.index}: ${def.name} — закрыт"
+            infoColor = Color.rgb(120, 144, 156)
+            infoDesc = "Убейте босса уровня ${def.index - 1}, чтобы открыть"
+        }
     }
 
     private fun tapWeapon(type: WeaponType) {

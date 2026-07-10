@@ -9,7 +9,7 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
 
-enum class GameState { MENU, RUNNING, LEVEL_UP, ITEM_POPUP, PAUSED, GAME_OVER }
+enum class GameState { MENU, RUNNING, LEVEL_UP, ITEM_POPUP, PAUSED, GAME_OVER, VICTORY }
 
 class Game(
     val screenW: Float,
@@ -25,11 +25,17 @@ class Game(
     val player = Player()
     var world = WorldGen(rng.nextInt())
 
+    var gameLevel = 1
+    var levelDef: LevelDef = LEVELS[0]
+
     val enemies = ArrayList<Enemy>()
     val projectiles = ArrayList<Projectile>()
+    /** Снаряды врагов (босс): бьют по игроку. */
+    val enemyShots = ArrayList<Projectile>()
     val pickups = ArrayList<Pickup>()
     val texts = ArrayList<FloatingText>()
     val booms = ArrayList<Boom>()
+    val particles = ArrayList<Particle>()
     /** Вспышки молний: (x1,y1,x2,y2,время жизни). */
     val lightningBolts = ArrayList<FloatArray>()
     /** Лучи пси-клинков: (x1,y1,x2,y2,время жизни). */
@@ -41,6 +47,21 @@ class Game(
     var chestsOpened = 0
     var spinEffect = 0f
     var nukeFlash = 0f
+    var revivesUsed = 0
+    var victoryReward = 0
+
+    // Босс.
+    var boss: Enemy? = null
+    private var bossSpawned = false
+
+    // Камера: плавно догоняет игрока; тряска при мощных событиях.
+    var camX = 0f
+    var camY = 0f
+    var shakeTime = 0f
+    var shakeMag = 0f
+    /** Сила движения джойстика в текущем кадре (для анимации ног). */
+    var moveMag = 0f
+
     private var spawnTimer = 0f
     private var eliteTimer = 45f
     private var shrineWaveTimer = 0f
@@ -55,8 +76,6 @@ class Game(
     val optionRects = ArrayList<RectF>()
     val pauseRect = RectF(screenW - 110f, 20f, screenW - 20f, 110f)
 
-    var revivesUsed = 0
-
     val minute: Int get() = (time / 60f).toInt()
 
     /** Цена сундука растёт с каждым открытым; Отмычка и Идол дают скидку. */
@@ -68,15 +87,25 @@ class Game(
             return (base * discount).toInt()
         }
 
+    // Множители сложности: минуты забега × уровень (этаж).
+    private val hpScale: Float get() = (1f + minute * 0.55f) * levelDef.hpMult
+    private val dmgScaleNow: Float get() = (1f + minute * 0.25f) * levelDef.dmgMult
+    private val speedScaleNow: Float get() = 1f + min(minute, 15) * 0.02f
+
     // ------------------------------------------------------------------
     // Запуск и завершение забега.
     // ------------------------------------------------------------------
     fun startRun() {
+        gameLevel = meta.selectedLevel.coerceIn(1, meta.unlockedLevel).coerceAtMost(LEVELS.size)
+        levelDef = LEVELS[gameLevel - 1]
+
         enemies.clear()
         projectiles.clear()
+        enemyShots.clear()
         pickups.clear()
         texts.clear()
         booms.clear()
+        particles.clear()
         lightningBolts.clear()
         beams.clear()
         world = WorldGen(rng.nextInt())
@@ -94,13 +123,11 @@ class Game(
             tomes.clear()
         }
         player.weapons.add(WeaponInstance(menu.selectedWeapon))
-        // Выбранные фолианты стартуют на 1 уровне, дальше качаются на левел-апах.
         for (name in meta.selectedTomes) {
             val tome = Tome.entries.firstOrNull { it.name == name } ?: continue
             player.tomes[tome] = 1
         }
         player.hp = player.maxHp
-        revivesUsed = 0
 
         time = 0f
         kills = 0
@@ -112,6 +139,13 @@ class Game(
         popupItem = null
         spinEffect = 0f
         nukeFlash = 0f
+        revivesUsed = 0
+        victoryReward = 0
+        boss = null
+        bossSpawned = false
+        camX = 0f
+        camY = 0f
+        shakeTime = 0f
         state = GameState.RUNNING
     }
 
@@ -123,6 +157,17 @@ class Game(
         state = GameState.MENU
     }
 
+    private fun victory() {
+        victoryReward = 200 + 250 * gameLevel
+        gold += victoryReward
+        if (gameLevel >= meta.unlockedLevel && gameLevel < LEVELS.size) {
+            meta.unlockedLevel = gameLevel + 1
+        }
+        meta.save()
+        shake(20f, 0.7f)
+        state = GameState.VICTORY
+    }
+
     // ------------------------------------------------------------------
     // Основной шаг симуляции.
     // ------------------------------------------------------------------
@@ -130,23 +175,27 @@ class Game(
         if (state != GameState.RUNNING) return
 
         time += dt
+        moveMag = dist(0f, 0f, moveX, moveY).coerceAtMost(1f)
         updatePlayer(dt, moveX, moveY)
         updateWeapons(dt)
+        spawnBossIfTime()
         updateEnemies(dt)
+        updateEnemyShots(dt)
         updateProjectiles(dt)
         updateBooms(dt)
         updatePickups(dt)
         updateWorldObjects(dt)
         updateBuffs(dt)
         updateTexts(dt)
+        updateParticles(dt)
         spawnEnemies(dt)
+        updateCamera(dt)
 
         if (spinEffect > 0f) spinEffect -= dt
         if (nukeFlash > 0f) nukeFlash -= dt
         if (chestHintTimer > 0f) chestHintTimer -= dt
 
         if (player.hp <= 0f) {
-            // Перо феникса: одно воскрешение за забег на каждый экземпляр.
             if (player.countSpecial(Special.REVIVE) > revivesUsed) {
                 revivesUsed++
                 player.hp = player.maxHp * 0.5f
@@ -156,11 +205,24 @@ class Game(
                     e.knockX = (e.x - player.x) / d * 900f
                     e.knockY = (e.y - player.y) / d * 900f
                 }
+                shake(14f, 0.5f)
                 addText(player.x, player.y - 120f, "ВОСКРЕШЕНИЕ!", Color.rgb(255, 171, 64), 46f, 2f)
             } else {
                 state = GameState.GAME_OVER
             }
         }
+    }
+
+    private fun updateCamera(dt: Float) {
+        val k = (dt * 8f).coerceAtMost(1f)
+        camX += (player.x - camX) * k
+        camY += (player.y - camY) * k
+        if (shakeTime > 0f) shakeTime -= dt
+    }
+
+    fun shake(mag: Float, duration: Float) {
+        shakeMag = mag
+        shakeTime = duration
     }
 
     private fun updatePlayer(dt: Float, moveX: Float, moveY: Float) {
@@ -194,30 +256,35 @@ class Game(
         player.iFrames = 0.5f
         addText(player.x, player.y - 40f, "-${dmg.toInt()}", Color.rgb(255, 82, 82), 30f)
 
-        // Шипы: атакующий получает половину своего урона за каждый предмет.
         val thorns = player.countSpecial(Special.THORNS)
         if (thorns > 0 && attacker != null) {
             hitEnemy(attacker, raw * 0.5f * thorns, knockFrom = player, canCrit = false)
         }
 
-        // Ответный вихрь (Axe): контратака при получении урона.
+        // Ответный вихрь: контратака при получении урона.
         for (w in player.weapons) {
             if (w.type == WeaponType.COUNTER_SPIN && w.timer <= 0f) {
-                w.timer = WeaponBalance.spinCooldown(w.level) * player.cooldownFactor()
-                spinEffect = 0.4f
-                val radius = WeaponBalance.spinRadius(w.level) * player.mult(Stat.AREA)
-                val dmgOut = WeaponBalance.spinDamage(w.level) * player.mult(Stat.DAMAGE)
-                for (e in enemies) {
-                    if (dist(player.x, player.y, e.x, e.y) < radius + e.type.radius) {
-                        hitEnemy(e, dmgOut, knockFrom = player)
-                    }
-                }
+                triggerSpin(w)
+            }
+        }
+    }
+
+    private fun triggerSpin(w: WeaponInstance) {
+        val evoCd = if (w.evolved) 0.6f else 1f
+        w.timer = WeaponBalance.spinCooldown(w.level) * player.cooldownFactor() * evoCd
+        spinEffect = 0.4f
+        val radius = WeaponBalance.spinRadius(w.level) * player.mult(Stat.AREA)
+        val dmg = WeaponBalance.spinDamage(w.level) * player.mult(Stat.DAMAGE) *
+            (if (w.evolved) 2f else 1f)
+        for (e in enemies) {
+            if (dist(player.x, player.y, e.x, e.y) < radius + e.type.radius) {
+                hitEnemy(e, dmg, knockFrom = player)
             }
         }
     }
 
     // ------------------------------------------------------------------
-    // Оружие.
+    // Оружие (evolved = эволюционная супер-форма с множителями).
     // ------------------------------------------------------------------
     private fun updateWeapons(dt: Float) {
         val dmgMult = player.mult(Stat.DAMAGE)
@@ -225,26 +292,28 @@ class Game(
         val cdFactor = player.cooldownFactor()
 
         for (w in player.weapons) {
+            val evo = w.evolved
             when (w.type) {
                 WeaponType.DART -> {
                     w.timer -= dt
                     if (w.timer <= 0f) {
                         val target = nearestEnemy(player.x, player.y, 1400f) ?: continue
-                        w.timer = WeaponBalance.dartCooldown(w.level) * cdFactor
+                        w.timer = WeaponBalance.dartCooldown(w.level) * cdFactor * (if (evo) 0.75f else 1f)
                         fireSpread(
-                            target, WeaponBalance.dartCount(w.level),
-                            WeaponBalance.dartDamage(w.level) * dmgMult,
+                            target,
+                            WeaponBalance.dartCount(w.level) + (if (evo) 2 else 0),
+                            WeaponBalance.dartDamage(w.level) * dmgMult * (if (evo) 2f else 1f),
                             750f * player.mult(Stat.PROJ_SPEED),
-                            ProjKind.DART, WeaponType.DART.color,
-                            pierce = 1 + w.level / 6, life = 1.6f,
+                            ProjKind.DART, w.displayColor,
+                            pierce = 1 + w.level / 6 + (if (evo) 2 else 0), life = 1.6f,
                         )
                     }
                 }
                 WeaponType.ORBIT -> {
                     w.orbitAngle += dt * 2.6f
-                    val count = WeaponBalance.orbitCount(w.level)
-                    val radius = WeaponBalance.orbitRadius(w.level) * areaMult
-                    val dmg = WeaponBalance.orbitDamage(w.level) * dmgMult
+                    val count = WeaponBalance.orbitCount(w.level) + (if (evo) 3 else 0)
+                    val radius = WeaponBalance.orbitRadius(w.level) * areaMult * (if (evo) 1.3f else 1f)
+                    val dmg = WeaponBalance.orbitDamage(w.level) * dmgMult * (if (evo) 2f else 1f)
                     for (i in 0 until count) {
                         val a = w.orbitAngle + i * (Math.PI.toFloat() * 2f / count)
                         val bx = player.x + cos(a) * radius
@@ -261,8 +330,8 @@ class Game(
                     w.timer -= dt
                     if (w.timer <= 0f) {
                         w.timer = WeaponBalance.AURA_TICK * cdFactor
-                        val radius = WeaponBalance.auraRadius(w.level) * areaMult
-                        val dmg = WeaponBalance.auraDamage(w.level) * dmgMult
+                        val radius = WeaponBalance.auraRadius(w.level) * areaMult * (if (evo) 1.4f else 1f)
+                        val dmg = WeaponBalance.auraDamage(w.level) * dmgMult * (if (evo) 2.2f else 1f)
                         for (e in enemies) {
                             if (e.fireTick <= 0f &&
                                 dist(player.x, player.y, e.x, e.y) < radius + e.type.radius
@@ -276,46 +345,36 @@ class Game(
                 WeaponType.LIGHTNING -> {
                     w.timer -= dt
                     if (w.timer <= 0f && enemies.isNotEmpty()) {
-                        w.timer = WeaponBalance.lightningCooldown(w.level) * cdFactor
-                        val dmg = WeaponBalance.lightningDamage(w.level) * dmgMult
+                        w.timer = WeaponBalance.lightningCooldown(w.level) * cdFactor *
+                            (if (evo) 0.8f else 1f)
+                        val dmg = WeaponBalance.lightningDamage(w.level) * dmgMult * (if (evo) 2f else 1f)
+                        val targets = WeaponBalance.lightningTargets(w.level) + (if (evo) 3 else 0)
                         val onScreen = enemies.filter {
                             dist(player.x, player.y, it.x, it.y) < screenW * 0.6f
                         }
-                        for (e in onScreen.shuffled(rng).take(WeaponBalance.lightningTargets(w.level))) {
+                        for (e in onScreen.shuffled(rng).take(targets)) {
                             hitEnemy(e, dmg, knockFrom = null)
                             lightningBolts.add(floatArrayOf(e.x, e.y - 700f, e.x, e.y, 0.25f))
                         }
                     }
                 }
-                WeaponType.COUNTER_SPIN -> {
-                    // Срабатывает в damagePlayer(); здесь только тикает кулдаун.
-                    if (w.timer > 0f) w.timer -= dt
-                }
                 WeaponType.SCYTHE -> {
                     sweepBlades(
-                        w, dt, blades = 1,
-                        speed = WeaponBalance.scytheSpeed(w.level),
+                        w, dt,
+                        blades = if (evo) 2 else 1,
+                        speed = WeaponBalance.scytheSpeed(w.level) * (if (evo) 1.5f else 1f),
                         radius = WeaponBalance.scytheRadius(w.level) * areaMult,
-                        dmg = WeaponBalance.scytheDamage(w.level) * dmgMult,
-                        lifesteal = false,
-                    )
-                }
-                WeaponType.REAPER -> {
-                    sweepBlades(
-                        w, dt, blades = WeaponBalance.REAPER_BLADES,
-                        speed = WeaponBalance.REAPER_SPEED,
-                        radius = WeaponBalance.REAPER_RADIUS * areaMult,
-                        dmg = WeaponBalance.REAPER_DMG * dmgMult,
-                        lifesteal = true,
+                        dmg = WeaponBalance.scytheDamage(w.level) * dmgMult * (if (evo) 2f else 1f),
+                        lifesteal = evo,
                     )
                 }
                 WeaponType.FROST_AURA -> {
                     w.timer -= dt
+                    val radius = WeaponBalance.frostRadius(w.level) * areaMult * (if (evo) 1.5f else 1f)
                     if (w.timer <= 0f) {
                         w.timer = WeaponBalance.FROST_TICK * cdFactor
-                        val radius = WeaponBalance.frostRadius(w.level) * areaMult
-                        val dmg = WeaponBalance.frostDamage(w.level) * dmgMult
-                        val slow = WeaponBalance.frostSlow(w.level)
+                        val dmg = WeaponBalance.frostDamage(w.level) * dmgMult * (if (evo) 2.5f else 1f)
+                        val slow = if (evo) 0.3f else WeaponBalance.frostSlow(w.level)
                         for (e in enemies) {
                             if (dist(player.x, player.y, e.x, e.y) < radius + e.type.radius) {
                                 if (e.frostTick <= 0f) {
@@ -327,34 +386,29 @@ class Game(
                             }
                         }
                     }
-                }
-                WeaponType.ICE_STORM -> {
-                    w.timer -= dt
-                    // orbitAngle используем как таймер заморозки.
-                    w.orbitAngle += dt
-                    val radius = WeaponBalance.ICE_STORM_RADIUS * areaMult
-                    if (w.timer <= 0f) {
-                        w.timer = WeaponBalance.FROST_TICK * cdFactor
-                        val dmg = WeaponBalance.ICE_STORM_DMG * dmgMult
-                        for (e in enemies) {
-                            if (dist(player.x, player.y, e.x, e.y) < radius + e.type.radius) {
-                                if (e.frostTick <= 0f) {
-                                    hitEnemy(e, dmg, knockFrom = null)
-                                    e.frostTick = WeaponBalance.FROST_TICK
+                    // Эволюция: периодическая заморозка всех в радиусе.
+                    if (evo) {
+                        w.extraTimer += dt
+                        if (w.extraTimer >= WeaponBalance.FREEZE_EVERY) {
+                            w.extraTimer = 0f
+                            for (e in enemies) {
+                                if (dist(player.x, player.y, e.x, e.y) < radius + e.type.radius) {
+                                    e.freezeTimer = WeaponBalance.FREEZE_TIME
                                 }
-                                e.slowTimer = 1.5f
-                                e.slowMult = WeaponBalance.ICE_STORM_SLOW
                             }
+                            addText(player.x, player.y - 90f, "ЗАМОРОЗКА!", Color.rgb(0, 229, 255), 34f)
                         }
                     }
-                    if (w.orbitAngle >= WeaponBalance.ICE_STORM_FREEZE_EVERY) {
-                        w.orbitAngle = 0f
-                        for (e in enemies) {
-                            if (dist(player.x, player.y, e.x, e.y) < radius + e.type.radius) {
-                                e.freezeTimer = WeaponBalance.ICE_STORM_FREEZE_TIME
-                            }
+                }
+                WeaponType.COUNTER_SPIN -> {
+                    if (w.timer > 0f) w.timer -= dt
+                    // Эволюция: автоспин раз в 5с даже без получения урона.
+                    if (evo) {
+                        w.extraTimer += dt
+                        if (w.extraTimer >= WeaponBalance.AUTO_SPIN_EVERY) {
+                            w.extraTimer = 0f
+                            triggerSpin(w)
                         }
-                        addText(player.x, player.y - 90f, "ЗАМОРОЗКА!", Color.rgb(0, 229, 255), 34f)
                     }
                 }
                 WeaponType.POISON -> {
@@ -363,36 +417,23 @@ class Game(
                         val target = nearestEnemy(player.x, player.y, 1200f) ?: continue
                         w.timer = WeaponBalance.poisonCooldown(w.level) * cdFactor
                         fireSpread(
-                            target, WeaponBalance.poisonCount(w.level),
-                            WeaponBalance.poisonDamage(w.level) * dmgMult,
+                            target,
+                            WeaponBalance.poisonCount(w.level) + (if (evo) 2 else 0),
+                            WeaponBalance.poisonDamage(w.level) * dmgMult * (if (evo) 2f else 1f),
                             700f * player.mult(Stat.PROJ_SPEED),
-                            ProjKind.POISON, WeaponType.POISON.color,
+                            ProjKind.POISON, w.displayColor,
                             pierce = 1, life = 1.5f,
                         )
-                    }
-                }
-                WeaponType.PLAGUE_CLOUD -> {
-                    w.timer -= dt
-                    if (w.timer <= 0f) {
-                        w.timer = 0.5f * cdFactor
-                        val radius = WeaponBalance.PLAGUE_RADIUS * areaMult
-                        for (e in enemies) {
-                            if (dist(player.x, player.y, e.x, e.y) < radius + e.type.radius) {
-                                if (e.plagueTick <= 0f) {
-                                    hitEnemy(e, WeaponBalance.PLAGUE_DMG * dmgMult, knockFrom = null)
-                                    e.plagueTick = 0.5f
-                                }
-                                applyPoison(e, WeaponBalance.PLAGUE_DPS_PER_STACK * dmgMult)
-                            }
-                        }
                     }
                 }
                 WeaponType.NUKE -> {
                     w.timer -= dt
                     if (w.timer <= 0f && enemies.isNotEmpty()) {
-                        w.timer = WeaponBalance.nukeCooldown(w.level) * cdFactor
+                        w.timer = WeaponBalance.nukeCooldown(w.level) * cdFactor *
+                            (if (evo) 0.6f else 1f)
                         nukeFlash = 0.5f
-                        val dmg = WeaponBalance.nukeDamage(w.level) * dmgMult
+                        shake(16f, 0.4f)
+                        val dmg = WeaponBalance.nukeDamage(w.level) * dmgMult * (if (evo) 2f else 1f)
                         for (e in enemies) {
                             if (dist(player.x, player.y, e.x, e.y) < screenW * 0.75f) {
                                 hitEnemy(e, dmg, knockFrom = player)
@@ -407,16 +448,16 @@ class Game(
                         val target = nearestEnemy(player.x, player.y, 1200f) ?: continue
                         w.timer = WeaponBalance.bananaCooldown(w.level) * cdFactor
                         val base = atan2(target.y - player.y, target.x - player.x)
-                        val count = WeaponBalance.bananaCount(w.level)
+                        val count = WeaponBalance.bananaCount(w.level) + (if (evo) 2 else 0)
+                        val dmg = WeaponBalance.bananaDamage(w.level) * dmgMult * (if (evo) 2f else 1f)
                         for (i in 0 until count) {
                             val a = base + (i - (count - 1) / 2f) * 0.35f
                             val speed = 700f * player.mult(Stat.PROJ_SPEED)
                             projectiles.add(
                                 Projectile(
                                     player.x, player.y, cos(a) * speed, sin(a) * speed,
-                                    WeaponBalance.bananaDamage(w.level) * dmgMult,
-                                    18f, pierce = Int.MAX_VALUE, life = 5f,
-                                    kind = ProjKind.BANANA, color = WeaponType.BANANA.color,
+                                    dmg, 18f, pierce = Int.MAX_VALUE, life = 5f,
+                                    kind = ProjKind.BANANA, color = w.displayColor,
                                 ),
                             )
                         }
@@ -427,14 +468,14 @@ class Game(
                     if (w.timer <= 0f) {
                         val target = nearestEnemy(player.x, player.y, 900f) ?: continue
                         w.timer = WeaponBalance.psiCooldown(w.level) * cdFactor
-                        firePsiBeam(w, target, dmgMult, areaMult)
+                        firePsiBeam(w, target, dmgMult, areaMult, evo)
                     }
                 }
                 WeaponType.METEOR -> {
                     w.timer -= dt
                     if (w.timer <= 0f) {
                         w.timer = WeaponBalance.meteorCooldown(w.level) * cdFactor
-                        repeat(WeaponBalance.meteorCount(w.level)) {
+                        repeat(WeaponBalance.meteorCount(w.level) + (if (evo) 3 else 0)) {
                             val a = rng.nextFloat() * Math.PI.toFloat() * 2f
                             val r = 120f + rng.nextFloat() * 380f
                             booms.add(
@@ -442,8 +483,10 @@ class Game(
                                     (player.x + cos(a) * r).coerceIn(-WORLD_HALF, WORLD_HALF),
                                     (player.y + sin(a) * r).coerceIn(-WORLD_HALF, WORLD_HALF),
                                     delay = 0.7f,
-                                    radius = WeaponBalance.meteorRadius(w.level) * areaMult,
-                                    damage = WeaponBalance.meteorDamage(w.level) * dmgMult,
+                                    radius = WeaponBalance.meteorRadius(w.level) * areaMult *
+                                        (if (evo) 1.3f else 1f),
+                                    damage = WeaponBalance.meteorDamage(w.level) * dmgMult *
+                                        (if (evo) 1.8f else 1f),
                                 ),
                             )
                         }
@@ -455,15 +498,16 @@ class Game(
                         val target = nearestEnemy(player.x, player.y, 700f) ?: continue
                         w.timer = WeaponBalance.shotgunCooldown(w.level) * cdFactor
                         val base = atan2(target.y - player.y, target.x - player.x)
-                        repeat(WeaponBalance.shotgunPellets(w.level)) {
+                        repeat(WeaponBalance.shotgunPellets(w.level) + (if (evo) 6 else 0)) {
                             val a = base + (rng.nextFloat() - 0.5f) * 0.9f
                             val speed = (800f + rng.nextFloat() * 150f) * player.mult(Stat.PROJ_SPEED)
                             projectiles.add(
                                 Projectile(
                                     player.x, player.y, cos(a) * speed, sin(a) * speed,
-                                    WeaponBalance.shotgunDamage(w.level) * dmgMult,
+                                    WeaponBalance.shotgunDamage(w.level) * dmgMult *
+                                        (if (evo) 1.6f else 1f),
                                     8f, pierce = 1, life = WeaponBalance.SHOTGUN_RANGE,
-                                    kind = ProjKind.PELLET, color = WeaponType.SHOTGUN.color,
+                                    kind = ProjKind.PELLET, color = w.displayColor,
                                 ),
                             )
                         }
@@ -473,12 +517,15 @@ class Game(
                     w.timer -= dt
                     if (w.timer <= 0f) {
                         val target = nearestEnemy(player.x, player.y, 1000f) ?: continue
-                        w.timer = WeaponBalance.greedCooldown(w.level) * cdFactor
+                        w.timer = WeaponBalance.greedCooldown(w.level) * cdFactor *
+                            (if (evo) 0.8f else 1f)
+                        val stackValue = if (evo) 1.0f else 0.4f
                         fireSpread(
                             target, 1,
-                            WeaponBalance.greedDamage(w.level, w.stacks) * dmgMult,
+                            WeaponBalance.greedDamage(w.level, w.stacks, stackValue) * dmgMult *
+                                (if (evo) 1.5f else 1f),
                             820f * player.mult(Stat.PROJ_SPEED),
-                            ProjKind.SLASH, WeaponType.GREED_BLADE.color,
+                            ProjKind.SLASH, w.displayColor,
                             pierce = 3, life = 1.2f,
                         )
                     }
@@ -499,7 +546,6 @@ class Game(
         }
     }
 
-    /** Общий веер снарядов в сторону цели. */
     private fun fireSpread(
         target: Enemy,
         count: Int,
@@ -522,7 +568,6 @@ class Game(
         }
     }
 
-    /** Коса/Жнец: клинки, метущие по кругу. */
     private fun sweepBlades(
         w: WeaponInstance,
         dt: Float,
@@ -552,10 +597,16 @@ class Game(
         }
     }
 
-    private fun firePsiBeam(w: WeaponInstance, target: Enemy, dmgMult: Float, areaMult: Float) {
-        val len = WeaponBalance.psiLength(w.level)
-        val width = WeaponBalance.psiWidth(w.level) * areaMult
-        val dmg = WeaponBalance.psiDamage(w.level) * dmgMult
+    private fun firePsiBeam(
+        w: WeaponInstance,
+        target: Enemy,
+        dmgMult: Float,
+        areaMult: Float,
+        evo: Boolean,
+    ) {
+        val len = WeaponBalance.psiLength(w.level) * (if (evo) 1.3f else 1f)
+        val width = WeaponBalance.psiWidth(w.level) * areaMult * (if (evo) 1.5f else 1f)
+        val dmg = WeaponBalance.psiDamage(w.level) * dmgMult * (if (evo) 2f else 1f)
         val a = atan2(target.y - player.y, target.x - player.x)
         val dx = cos(a)
         val dy = sin(a)
@@ -603,15 +654,86 @@ class Game(
         }
         e.hp -= dmg
         e.hitFlash = 0.12f
+        spawnParticles(e.x, e.y, if (crit) Color.rgb(255, 213, 79) else Color.WHITE, 2, 160f, 3f)
         if (crit) {
             addText(e.x, e.y - e.type.radius - 8f, "${dmg.toInt()}!", Color.rgb(255, 213, 79), 36f)
         } else {
             addText(e.x + rng.nextFloat() * 20f - 10f, e.y - e.type.radius, dmg.toInt().toString(), Color.WHITE, 26f)
         }
-        if (knockFrom != null) {
+        // Босс не отлетает от ударов.
+        if (knockFrom != null && e.type != EnemyType.BOSS) {
             val d = dist(knockFrom.x, knockFrom.y, e.x, e.y).coerceAtLeast(1f)
             e.knockX = (e.x - knockFrom.x) / d * 220f
             e.knockY = (e.y - knockFrom.y) / d * 220f
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Босс.
+    // ------------------------------------------------------------------
+    private fun spawnBossIfTime() {
+        if (bossSpawned || time < BOSS_TIME) return
+        bossSpawned = true
+        val (x, y) = spawnPoint()
+        val b = Enemy(
+            EnemyType.BOSS, x, y,
+            hpScale = levelDef.hpMult,
+            dmgScale = levelDef.dmgMult,
+            speedScale = 1f,
+        )
+        enemies.add(b)
+        boss = b
+        shake(18f, 0.8f)
+        addText(
+            player.x, player.y - 220f,
+            "БОСС: ${levelDef.bossName}!", levelDef.bossColor, 52f, 3f,
+        )
+    }
+
+    private fun updateBoss(b: Enemy, dt: Float) {
+        // Рывок к игроку.
+        b.bossChargeTimer -= dt
+        if (b.bossChargeTimer <= 0f) {
+            b.bossChargeTimer = 6.5f
+            val d = dist(b.x, b.y, player.x, player.y).coerceAtLeast(1f)
+            b.knockX = (player.x - b.x) / d * 1300f
+            b.knockY = (player.y - b.y) / d * 1300f
+            shake(8f, 0.3f)
+            addText(b.x, b.y - b.type.radius - 30f, "РЫВОК!", Color.rgb(255, 138, 101), 32f)
+        }
+        // Веер снарядов по кругу.
+        b.bossShootTimer -= dt
+        if (b.bossShootTimer <= 0f) {
+            b.bossShootTimer = 9f
+            val shots = 12
+            for (i in 0 until shots) {
+                val a = i * (Math.PI.toFloat() * 2f / shots) + rng.nextFloat() * 0.3f
+                enemyShots.add(
+                    Projectile(
+                        b.x, b.y, cos(a) * 340f, sin(a) * 340f,
+                        damage = b.damage * 0.5f, radius = 15f,
+                        pierce = 1, life = 4f,
+                        kind = ProjKind.DART, color = Color.rgb(255, 82, 82),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun updateEnemyShots(dt: Float) {
+        var i = enemyShots.size - 1
+        while (i >= 0) {
+            val p = enemyShots[i]
+            p.x += p.vx * dt
+            p.y += p.vy * dt
+            p.life -= dt
+            var dead = p.life <= 0f
+            if (!dead && dist(p.x, p.y, player.x, player.y) < p.radius + player.radius) {
+                damagePlayer(p.damage)
+                dead = true
+            }
+            if (dead) enemyShots.removeAt(i)
+            i--
         }
     }
 
@@ -633,6 +755,8 @@ class Game(
                 continue
             }
 
+            if (e.type == EnemyType.BOSS) updateBoss(e, dt)
+
             // Яд: тикающий урон раз в полсекунды.
             if (e.poisonStacks > 0 && e.poisonTimer > 0f) {
                 e.poisonTimer -= dt
@@ -649,7 +773,9 @@ class Game(
 
             var tx = player.x
             var ty = player.y
-            if (activeShrine != null && e.type != EnemyType.ELITE && rngHash(e) % 3 == 0) {
+            if (activeShrine != null && e.type != EnemyType.ELITE &&
+                e.type != EnemyType.BOSS && rngHash(e) % 3 == 0
+            ) {
                 tx = activeShrine.x
                 ty = activeShrine.y
             }
@@ -668,7 +794,10 @@ class Game(
             if (e.bananaTick > 0f) e.bananaTick -= dt
             if (e.plagueTick > 0f) e.plagueTick -= dt
             if (e.slowTimer > 0f) e.slowTimer -= dt
-            if (e.freezeTimer > 0f) e.freezeTimer -= dt
+            if (e.freezeTimer > 0f) {
+                // Босс замораживается на треть длительности.
+                e.freezeTimer -= if (e.type == EnemyType.BOSS) dt * 3f else dt
+            }
 
             if (dist(e.x, e.y, player.x, player.y) < e.type.radius + player.radius) {
                 damagePlayer(e.damage, attacker = e)
@@ -681,34 +810,38 @@ class Game(
 
     private fun onEnemyDeath(e: Enemy) {
         kills++
+        spawnParticles(e.x, e.y, e.type.color, 6, 220f, 5f)
         pickups.add(Pickup(PickupType.XP, e.x, e.y, e.type.xp))
         pickups.add(Pickup(PickupType.GOLD, e.x - 14f, e.y + 10f, e.type.gold.toFloat()))
         if (rng.nextFloat() < 0.03f) {
             pickups.add(Pickup(PickupType.HP, e.x + 20f, e.y, 20f))
         }
-        // Вампиризм и стаки Клинка жажды.
         val steal = player.countSpecial(Special.LIFESTEAL)
         if (steal > 0) player.hp = min(player.maxHp, player.hp + steal)
         for (w in player.weapons) {
             if (w.type == WeaponType.GREED_BLADE) w.stacks++
         }
-        // Элита всегда оставляет предмет (бесплатно).
         if (e.type == EnemyType.ELITE) {
             giveItem(ItemPool.roll(rng, minute, player.items, meta.disabledItems))
+        }
+        if (e.type == EnemyType.BOSS) {
+            boss = null
+            spawnParticles(e.x, e.y, levelDef.bossColor, 40, 420f, 8f)
+            victory()
         }
     }
 
     private fun spawnEnemies(dt: Float) {
         spawnTimer -= dt
         if (spawnTimer <= 0f) {
-            spawnTimer = (1.1f - minute * 0.05f).coerceAtLeast(0.45f)
-            val count = 2 + minute
-            val hpScale = 1f + minute * 0.55f
-            val dmgScale = 1f + minute * 0.25f
+            // После выхода босса волны редеют вдвое.
+            val bossFactor = if (bossSpawned) 2f else 1f
+            spawnTimer = ((1.1f - minute * 0.05f).coerceAtLeast(0.35f)) * bossFactor
+            val count = 2 + minute + levelDef.spawnBonus
             repeat(count) {
                 val type = rollEnemyType()
                 val (x, y) = spawnPoint()
-                enemies.add(Enemy(type, x, y, hpScale, dmgScale))
+                enemies.add(Enemy(type, x, y, hpScale, dmgScaleNow, speedScaleNow))
             }
         }
 
@@ -716,7 +849,14 @@ class Game(
         if (eliteTimer <= 0f) {
             eliteTimer = 60f
             val (x, y) = spawnPoint()
-            enemies.add(Enemy(EnemyType.ELITE, x, y, 1f + minute * 0.8f, 1f + minute * 0.2f))
+            enemies.add(
+                Enemy(
+                    EnemyType.ELITE, x, y,
+                    (1f + minute * 0.8f) * levelDef.hpMult,
+                    (1f + minute * 0.2f) * levelDef.dmgMult,
+                    speedScaleNow,
+                ),
+            )
             addText(player.x, player.y - 200f, "ЭЛИТА!", Color.rgb(255, 213, 79), 44f, 1.6f)
         }
 
@@ -731,13 +871,21 @@ class Game(
                 shrineWaveTimer = 2f
                 repeat(3 + minute / 2) {
                     val (x, y) = spawnPoint()
-                    enemies.add(Enemy(EnemyType.RUNNER, x, y, 1f + minute * 0.4f, 1f + minute * 0.2f))
+                    enemies.add(
+                        Enemy(
+                            EnemyType.RUNNER, x, y,
+                            (1f + minute * 0.4f) * levelDef.hpMult,
+                            dmgScaleNow, speedScaleNow,
+                        ),
+                    )
                 }
             }
         }
-        if (enemies.size > 220) {
-            enemies.sortBy { dist(player.x, player.y, it.x, it.y) }
-            while (enemies.size > 200) enemies.removeAt(enemies.size - 1)
+        if (enemies.size > 260) {
+            enemies.sortBy {
+                if (it.type == EnemyType.BOSS) 0f else dist(player.x, player.y, it.x, it.y)
+            }
+            while (enemies.size > 240) enemies.removeAt(enemies.size - 1)
         }
     }
 
@@ -761,7 +909,7 @@ class Game(
     }
 
     // ------------------------------------------------------------------
-    // Снаряды, взрывы, подбираемое.
+    // Снаряды, взрывы, частицы, подбираемое.
     // ------------------------------------------------------------------
     private fun updateProjectiles(dt: Float) {
         var i = projectiles.size - 1
@@ -795,9 +943,10 @@ class Game(
                         }
                         hitEnemy(e, p.damage, knockFrom = null)
                         if (p.kind == ProjKind.POISON) {
-                            // ДПС яда зависит от уровня оружия на момент выстрела.
                             val w = player.weapons.firstOrNull { it.type == WeaponType.POISON }
-                            val dps = WeaponBalance.poisonDps(w?.level ?: 1) * player.mult(Stat.DAMAGE)
+                            val evoMult = if (w?.evolved == true) 2f else 1f
+                            val dps = WeaponBalance.poisonDps(w?.level ?: 1) *
+                                player.mult(Stat.DAMAGE) * evoMult
                             applyPoison(e, dps)
                         }
                         p.pierce--
@@ -822,6 +971,7 @@ class Game(
                 if (b.delay <= 0f) {
                     b.exploded = true
                     b.flash = 0.35f
+                    spawnParticles(b.x, b.y, Color.rgb(255, 167, 38), 8, 300f, 5f)
                     for (e in enemies) {
                         if (dist(b.x, b.y, e.x, e.y) < b.radius + e.type.radius) {
                             hitEnemy(e, b.damage, knockFrom = null)
@@ -832,6 +982,36 @@ class Game(
                 b.flash -= dt
                 if (b.flash <= 0f) booms.removeAt(i)
             }
+            i--
+        }
+    }
+
+    fun spawnParticles(x: Float, y: Float, color: Int, count: Int, speed: Float, size: Float) {
+        if (particles.size > 280) return
+        repeat(count) {
+            val a = rng.nextFloat() * Math.PI.toFloat() * 2f
+            val v = speed * (0.4f + rng.nextFloat() * 0.6f)
+            particles.add(
+                Particle(
+                    x, y, cos(a) * v, sin(a) * v,
+                    life = 0.3f + rng.nextFloat() * 0.3f,
+                    color = color,
+                    size = size * (0.6f + rng.nextFloat() * 0.8f),
+                ),
+            )
+        }
+    }
+
+    private fun updateParticles(dt: Float) {
+        var i = particles.size - 1
+        while (i >= 0) {
+            val p = particles[i]
+            p.x += p.vx * dt
+            p.y += p.vy * dt
+            p.vx *= 0.9f
+            p.vy *= 0.9f
+            p.life -= dt
+            if (p.life <= 0f) particles.removeAt(i)
             i--
         }
     }
@@ -932,6 +1112,7 @@ class Game(
                 is GoldPile -> {
                     if (dist(player.x, player.y, obj.x, obj.y) < obj.radius + player.radius) {
                         obj.consumed = true
+                        spawnParticles(obj.x, obj.y, Color.rgb(255, 193, 7), 5, 200f, 4f)
                         gainGold(obj.amount)
                     }
                 }
@@ -963,9 +1144,13 @@ class Game(
         }
     }
 
+    private fun captureSpeed(): Float =
+        1f + 0.3f * player.countSpecial(Special.CAPTURE_SPEED)
+
     private fun captureShrine(s: Shrine) {
         player.buffs.removeAll { it.name == s.kind.label }
         player.buffs.add(Buff(s.kind.label, s.kind.stats, s.kind.duration, s.kind.color))
+        spawnParticles(s.x, s.y, s.kind.color, 14, 320f, 6f)
         addText(s.x, s.y - 100f, "${s.kind.label}!", s.kind.color, 40f, 1.8f)
     }
 
@@ -979,12 +1164,9 @@ class Game(
         )
         player.buffs.add(Buff("Статуя предков", bonus, Float.POSITIVE_INFINITY, Color.rgb(178, 223, 219)))
         player.hp = min(player.maxHp, player.hp + player.maxHp * 0.2f)
+        spawnParticles(s.x, s.y, Color.rgb(178, 223, 219), 14, 320f, 6f)
         addText(s.x, s.y - 100f, "+5% ко всем навыкам (навсегда)", Color.rgb(178, 223, 219), 34f, 2.2f)
     }
-
-    /** Знамёна ускоряют захват точек. */
-    private fun captureSpeed(): Float =
-        1f + 0.3f * player.countSpecial(Special.CAPTURE_SPEED)
 
     private fun giveItem(item: ItemDef) {
         player.items.add(item)
@@ -994,17 +1176,17 @@ class Game(
         checkEvolutions()
     }
 
-    /** Оружие 20 ур. + катализатор → эволюция. */
+    /** Оружие 20 ур. + свой катализатор → эволюция. */
     private fun checkEvolutions() {
-        for (def in EVOLUTIONS) {
-            val w = player.weapons.firstOrNull { it.type == def.base } ?: continue
-            if (w.level < MAX_WEAPON_LEVEL) continue
-            if (!player.items.any { it.special == def.catalyst }) continue
-            w.type = def.result
-            addText(
-                player.x, player.y - 140f,
-                "ЭВОЛЮЦИЯ: ${def.result.label}!", def.result.color, 44f, 2.5f,
-            )
+        for (w in player.weapons) {
+            if (w.evolved || w.level < MAX_WEAPON_LEVEL) continue
+            if (player.items.any { it.catalystFor == w.type }) {
+                w.evolved = true
+                val evo = EVOLUTIONS.getValue(w.type)
+                spawnParticles(player.x, player.y, evo.color, 24, 380f, 7f)
+                shake(12f, 0.5f)
+                addText(player.x, player.y - 140f, "ЭВОЛЮЦИЯ: ${evo.label}!", evo.color, 44f, 2.5f)
+            }
         }
     }
 
@@ -1044,8 +1226,7 @@ class Game(
     // ------------------------------------------------------------------
     fun handleTap(x: Float, y: Float) {
         when (state) {
-            // Меню обрабатывается в GameView через touchDown/Move/Up
-            // (там нужен скролл списка предметов).
+            // Меню обрабатывается в GameView через touchDown/Move/Up.
             GameState.MENU -> Unit
             GameState.LEVEL_UP -> {
                 for (i in optionRects.indices) {
@@ -1065,6 +1246,7 @@ class Game(
             }
             GameState.PAUSED -> state = GameState.RUNNING
             GameState.GAME_OVER -> finishRun()
+            GameState.VICTORY -> finishRun()
             GameState.RUNNING -> {
                 if (pauseRect.contains(x, y)) state = GameState.PAUSED
             }

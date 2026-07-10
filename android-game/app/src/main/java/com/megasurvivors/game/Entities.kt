@@ -65,12 +65,27 @@ enum class EnemyType(
     TANK(90f, 60f, 16f, 34f, 4f, 3, Color.rgb(84, 110, 122)),
     BRUTE(45f, 110f, 12f, 27f, 2.5f, 2, Color.rgb(124, 179, 66)),
     ELITE(600f, 85f, 24f, 48f, 25f, 30, Color.rgb(255, 213, 79)),
+    BOSS(42000f, 72f, 40f, 96f, 100f, 300, Color.rgb(103, 58, 183)),
 }
 
-class Enemy(val type: EnemyType, var x: Float, var y: Float, hpScale: Float, val dmgScale: Float) {
+class Enemy(
+    val type: EnemyType,
+    var x: Float,
+    var y: Float,
+    hpScale: Float,
+    val dmgScale: Float,
+    /** Множитель скорости (враги ускоряются к концу забега). */
+    val speedScale: Float = 1f,
+) {
     var hp = type.hp * hpScale
     val maxHp = hp
     var hitFlash = 0f
+    /** Фаза анимации (пульсация), чтобы враги не дёргались синхронно. */
+    val animPhase = (System.identityHashCode(this) and 0xFF) / 255f * 6.28f
+
+    // Атаки босса.
+    var bossChargeTimer = 6f
+    var bossShootTimer = 9f
 
     // Таймеры получения периодического урона от разных источников.
     var fireTick = 0f
@@ -97,9 +112,24 @@ class Enemy(val type: EnemyType, var x: Float, var y: Float, hpScale: Float, val
     val effectiveSpeed: Float
         get() = when {
             freezeTimer > 0f -> 0f
-            slowTimer > 0f -> type.speed * slowMult
-            else -> type.speed
+            // Босса нельзя замедлить ниже 70%.
+            slowTimer > 0f -> type.speed * speedScale *
+                (if (type == EnemyType.BOSS) slowMult.coerceAtLeast(0.7f) else slowMult)
+            else -> type.speed * speedScale
         }
+}
+
+/** Частица для эффектов: искры попаданий, смерть врагов, взрывы. */
+class Particle(
+    var x: Float,
+    var y: Float,
+    var vx: Float,
+    var vy: Float,
+    var life: Float,
+    val color: Int,
+    val size: Float,
+) {
+    val maxLife = life
 }
 
 enum class ProjKind { DART, POISON, BANANA, PELLET, SLASH }

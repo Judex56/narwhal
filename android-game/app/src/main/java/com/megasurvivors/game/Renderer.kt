@@ -18,10 +18,7 @@ class Renderer(private val game: Game) {
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
-
-    private val bgColor = Color.rgb(26, 34, 24)
-    private val gridColor = Color.rgb(34, 44, 32)
-    private val decorColor = Color.rgb(45, 58, 42)
+    private val path = Path()
 
     fun draw(canvas: Canvas, joystick: Joystick) {
         if (game.state == GameState.MENU) {
@@ -30,10 +27,14 @@ class Renderer(private val game: Game) {
         }
 
         val g = game
-        val camX = g.player.x - g.screenW / 2f
-        val camY = g.player.y - g.screenH / 2f
+        var camX = g.camX - g.screenW / 2f
+        var camY = g.camY - g.screenH / 2f
+        if (g.shakeTime > 0f) {
+            camX += (Random.Default.nextFloat() - 0.5f) * g.shakeMag * 2f
+            camY += (Random.Default.nextFloat() - 0.5f) * g.shakeMag * 2f
+        }
 
-        canvas.drawColor(bgColor)
+        canvas.drawColor(g.levelDef.bg)
         canvas.save()
         canvas.translate(-camX, -camY)
 
@@ -43,14 +44,17 @@ class Renderer(private val game: Game) {
         drawPickups(canvas)
         drawAuras(canvas)
         drawBooms(canvas)
+        drawShadows(canvas)
         drawEnemies(canvas)
         drawPlayer(canvas)
         drawSpinEffect(canvas)
         drawOrbitBlades(canvas)
         drawSweepBlades(canvas)
         drawProjectiles(canvas)
+        drawEnemyShots(canvas)
         drawBeams(canvas)
         drawLightning(canvas)
+        drawParticles(canvas)
         drawFloatingTexts(canvas)
 
         canvas.restore()
@@ -69,6 +73,7 @@ class Renderer(private val game: Game) {
             GameState.ITEM_POPUP -> drawItemPopup(canvas)
             GameState.PAUSED -> drawCenterMessage(canvas, "ПАУЗА", "Коснитесь, чтобы продолжить")
             GameState.GAME_OVER -> drawGameOver(canvas)
+            GameState.VICTORY -> drawVictory(canvas)
             else -> Unit
         }
     }
@@ -79,7 +84,7 @@ class Renderer(private val game: Game) {
     private fun drawGround(canvas: Canvas, camX: Float, camY: Float) {
         val g = game
         val cell = 175f
-        stroke.color = gridColor
+        stroke.color = g.levelDef.grid
         stroke.strokeWidth = 2f
         var x = ((camX / cell).toInt() - 1) * cell
         while (x < camX + g.screenW + cell) {
@@ -92,7 +97,7 @@ class Renderer(private val game: Game) {
             y += cell
         }
 
-        fill.color = decorColor
+        fill.color = g.levelDef.decor
         val cs = CHUNK_SIZE.toInt()
         val c0x = Math.floorDiv(camX.toInt(), cs)
         val c0y = Math.floorDiv(camY.toInt(), cs)
@@ -111,8 +116,7 @@ class Renderer(private val game: Game) {
     }
 
     private fun drawWorldBorder(canvas: Canvas) {
-        // Тьма за границей мира.
-        fill.color = Color.rgb(12, 14, 12)
+        fill.color = Color.rgb(10, 10, 12)
         val h = WORLD_HALF
         val far = h + 3000f
         canvas.drawRect(-far, -far, far, -h, fill)
@@ -129,6 +133,8 @@ class Renderer(private val game: Game) {
             if (obj.consumed) continue
             when (obj) {
                 is Chest -> {
+                    fill.color = 0x33000000
+                    canvas.drawOval(RectF(obj.x - 36f, obj.y + 18f, obj.x + 36f, obj.y + 34f), fill)
                     fill.color = Color.rgb(121, 85, 72)
                     canvas.drawRoundRect(
                         RectF(obj.x - 34f, obj.y - 26f, obj.x + 34f, obj.y + 26f), 8f, 8f, fill,
@@ -141,7 +147,6 @@ class Renderer(private val game: Game) {
                     canvas.drawRoundRect(
                         RectF(obj.x - 34f, obj.y - 26f, obj.x + 34f, obj.y + 26f), 8f, 8f, stroke,
                     )
-                    // Цена открытия.
                     text.textAlign = Paint.Align.CENTER
                     text.textSize = 24f
                     text.color = Color.rgb(255, 213, 79)
@@ -162,7 +167,7 @@ class Renderer(private val game: Game) {
                     fill.color = Color.rgb(69, 90, 100)
                     canvas.drawRect(obj.x - 26f, obj.y, obj.x + 26f, obj.y + 34f, fill)
                     fill.color = obj.kind.color
-                    val path = Path()
+                    path.reset()
                     path.moveTo(obj.x, obj.y - 46f)
                     path.lineTo(obj.x + 22f, obj.y - 6f)
                     path.lineTo(obj.x, obj.y + 8f)
@@ -213,7 +218,7 @@ class Renderer(private val game: Game) {
                 PickupType.XP -> {
                     fill.color = if (p.value >= 4f) Color.rgb(255, 213, 79) else Color.rgb(38, 198, 218)
                     val r = if (p.value >= 4f) 14f else 10f
-                    val path = Path()
+                    path.reset()
                     path.moveTo(p.x, p.y - r)
                     path.lineTo(p.x + r * 0.7f, p.y)
                     path.lineTo(p.x, p.y + r)
@@ -238,26 +243,22 @@ class Renderer(private val game: Game) {
     }
 
     // ------------------------------------------------------------------
-    // Сущности и эффекты оружия.
+    // Ауры оружия.
     // ------------------------------------------------------------------
-    private fun auraFor(type: WeaponType): Pair<Float, Int>? {
-        val w = game.player.weapons.firstOrNull { it.type == type } ?: return null
-        val areaMult = game.player.mult(Stat.AREA)
-        return when (type) {
-            WeaponType.AURA -> Pair(WeaponBalance.auraRadius(w.level) * areaMult, Color.rgb(255, 112, 67))
-            WeaponType.FROST_AURA -> Pair(WeaponBalance.frostRadius(w.level) * areaMult, Color.rgb(128, 222, 234))
-            WeaponType.ICE_STORM -> Pair(WeaponBalance.ICE_STORM_RADIUS * areaMult, Color.rgb(0, 229, 255))
-            WeaponType.PLAGUE_CLOUD -> Pair(WeaponBalance.PLAGUE_RADIUS * areaMult, Color.rgb(118, 255, 3))
-            else -> null
-        }
-    }
-
     private fun drawAuras(canvas: Canvas) {
-        for (type in listOf(
-            WeaponType.AURA, WeaponType.FROST_AURA,
-            WeaponType.ICE_STORM, WeaponType.PLAGUE_CLOUD,
-        )) {
-            val (r, color) = auraFor(type) ?: continue
+        for (w in game.player.weapons) {
+            val areaMult = game.player.mult(Stat.AREA)
+            val (r, color) = when (w.type) {
+                WeaponType.AURA -> Pair(
+                    WeaponBalance.auraRadius(w.level) * areaMult * (if (w.evolved) 1.4f else 1f),
+                    w.displayColor,
+                )
+                WeaponType.FROST_AURA -> Pair(
+                    WeaponBalance.frostRadius(w.level) * areaMult * (if (w.evolved) 1.5f else 1f),
+                    w.displayColor,
+                )
+                else -> continue
+            }
             fill.color = (color and 0x00FFFFFF) or 0x26000000
             canvas.drawCircle(game.player.x, game.player.y, r, fill)
             stroke.color = (color and 0x00FFFFFF) or 0x66000000.toInt()
@@ -269,7 +270,6 @@ class Renderer(private val game: Game) {
     private fun drawBooms(canvas: Canvas) {
         for (b in game.booms) {
             if (!b.exploded) {
-                // Метка приземления.
                 stroke.color = Color.argb(160, 255, 167, 38)
                 stroke.strokeWidth = 4f
                 canvas.drawCircle(b.x, b.y, b.radius, stroke)
@@ -283,24 +283,91 @@ class Renderer(private val game: Game) {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Сущности: тени, формы, анимация.
+    // ------------------------------------------------------------------
+    private fun drawShadows(canvas: Canvas) {
+        fill.color = 0x2E000000
+        for (e in game.enemies) {
+            val r = e.type.radius
+            canvas.drawOval(RectF(e.x - r, e.y + r * 0.55f, e.x + r, e.y + r * 1.05f), fill)
+        }
+        val p = game.player
+        canvas.drawOval(
+            RectF(p.x - p.radius, p.y + p.radius * 0.55f, p.x + p.radius, p.y + p.radius * 1.05f),
+            fill,
+        )
+    }
+
     private fun drawEnemies(canvas: Canvas) {
         for (e in game.enemies) {
-            fill.color = when {
+            val pulse = 1f + 0.05f * sin(game.time * 6f + e.animPhase)
+            val r = e.type.radius * pulse
+            val color = when {
                 e.hitFlash > 0f -> Color.WHITE
                 e.freezeTimer > 0f -> Color.rgb(100, 181, 246)
                 e.poisonStacks > 0 -> blend(e.type.color, Color.rgb(118, 255, 3), 0.35f)
                 e.slowTimer > 0f -> blend(e.type.color, Color.rgb(128, 222, 234), 0.35f)
                 else -> e.type.color
             }
-            canvas.drawCircle(e.x, e.y, e.type.radius, fill)
-            val d = dist(e.x, e.y, game.player.x, game.player.y).coerceAtLeast(1f)
-            val ex = (game.player.x - e.x) / d * e.type.radius * 0.4f
-            val ey = (game.player.y - e.y) / d * e.type.radius * 0.4f
-            fill.color = Color.BLACK
-            canvas.drawCircle(e.x + ex - e.type.radius * 0.22f, e.y + ey, e.type.radius * 0.14f, fill)
-            canvas.drawCircle(e.x + ex + e.type.radius * 0.22f, e.y + ey, e.type.radius * 0.14f, fill)
+            fill.color = color
 
-            if (e.type == EnemyType.ELITE || e.hp < e.maxHp) {
+            val toPlayer = kotlin.math.atan2(game.player.y - e.y, game.player.x - e.x)
+            when (e.type) {
+                EnemyType.WALKER -> canvas.drawCircle(e.x, e.y, r, fill)
+                EnemyType.RUNNER -> {
+                    // Треугольник, смотрящий на игрока.
+                    path.reset()
+                    for (k in 0..2) {
+                        val a = toPlayer + k * (Math.PI.toFloat() * 2f / 3f)
+                        val rr = if (k == 0) r * 1.3f else r
+                        val px = e.x + cos(a) * rr
+                        val py = e.y + sin(a) * rr
+                        if (k == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                    }
+                    path.close()
+                    canvas.drawPath(path, fill)
+                }
+                EnemyType.BRUTE -> canvas.drawRoundRect(
+                    RectF(e.x - r, e.y - r, e.x + r, e.y + r), r * 0.3f, r * 0.3f, fill,
+                )
+                EnemyType.TANK -> drawPolygon(canvas, e.x, e.y, r * 1.1f, 6, game.time * 0.4f)
+                EnemyType.ELITE -> {
+                    drawPolygon(canvas, e.x, e.y, r * 1.15f, 5, game.time * 1.2f)
+                    stroke.color = Color.rgb(255, 241, 118)
+                    stroke.strokeWidth = 4f
+                    canvas.drawCircle(e.x, e.y, r * 1.25f, stroke)
+                }
+                EnemyType.BOSS -> {
+                    // Пульсирующее кольцо + шипастое тело + корона.
+                    stroke.color = (game.levelDef.bossColor and 0x00FFFFFF) or 0x55000000
+                    stroke.strokeWidth = 10f
+                    canvas.drawCircle(e.x, e.y, r * 1.3f + 8f * sin(game.time * 3f), stroke)
+                    drawPolygon(canvas, e.x, e.y, r * 1.15f, 8, game.time * 0.8f)
+                    fill.color = if (e.hitFlash > 0f) Color.WHITE else game.levelDef.bossColor
+                    canvas.drawCircle(e.x, e.y, r * 0.85f, fill)
+                    fill.color = Color.rgb(255, 213, 79)
+                    path.reset()
+                    path.moveTo(e.x - 34f, e.y - r * 0.9f)
+                    path.lineTo(e.x - 22f, e.y - r * 0.9f - 30f)
+                    path.lineTo(e.x - 10f, e.y - r * 0.9f)
+                    path.lineTo(e.x, e.y - r * 0.9f - 34f)
+                    path.lineTo(e.x + 10f, e.y - r * 0.9f)
+                    path.lineTo(e.x + 22f, e.y - r * 0.9f - 30f)
+                    path.lineTo(e.x + 34f, e.y - r * 0.9f)
+                    path.close()
+                    canvas.drawPath(path, fill)
+                }
+            }
+
+            // Глаза.
+            val ex = cos(toPlayer) * r * 0.4f
+            val ey = sin(toPlayer) * r * 0.4f
+            fill.color = Color.BLACK
+            canvas.drawCircle(e.x + ex - r * 0.22f, e.y + ey, r * 0.14f, fill)
+            canvas.drawCircle(e.x + ex + r * 0.22f, e.y + ey, r * 0.14f, fill)
+
+            if (e.type != EnemyType.BOSS && (e.type == EnemyType.ELITE || e.hp < e.maxHp)) {
                 val w = e.type.radius * 2f
                 val top = e.y - e.type.radius - 14f
                 fill.color = Color.rgb(40, 40, 40)
@@ -309,6 +376,18 @@ class Renderer(private val game: Game) {
                 canvas.drawRect(e.x - w / 2, top, e.x - w / 2 + w * (e.hp / e.maxHp), top + 6f, fill)
             }
         }
+    }
+
+    private fun drawPolygon(canvas: Canvas, cx: Float, cy: Float, r: Float, sides: Int, rot: Float) {
+        path.reset()
+        for (k in 0 until sides) {
+            val a = rot + k * (Math.PI.toFloat() * 2f / sides)
+            val px = cx + cos(a) * r
+            val py = cy + sin(a) * r
+            if (k == 0) path.moveTo(px, py) else path.lineTo(px, py)
+        }
+        path.close()
+        canvas.drawPath(path, fill)
     }
 
     private fun blend(c1: Int, c2: Int, t: Float): Int {
@@ -321,14 +400,25 @@ class Renderer(private val game: Game) {
     private fun drawPlayer(canvas: Canvas) {
         val p = game.player
         if (p.iFrames > 0f && (p.iFrames * 20).toInt() % 2 == 0) return
+
+        // Ноги-кружки шагают, когда игрок движется.
+        if (game.moveMag > 0.05f) {
+            val step = sin(game.time * 14f) * 10f * game.moveMag
+            fill.color = Color.rgb(144, 164, 174)
+            canvas.drawCircle(p.x - 10f, p.y + p.radius * 0.8f + step * 0.4f, 7f, fill)
+            canvas.drawCircle(p.x + 10f, p.y + p.radius * 0.8f - step * 0.4f, 7f, fill)
+        }
+
+        val bob = if (game.moveMag > 0.05f) sin(game.time * 14f) * 2.5f else sin(game.time * 3f) * 1.5f
+        val py = p.y + bob
         fill.color = Color.rgb(236, 239, 241)
-        canvas.drawCircle(p.x, p.y, p.radius, fill)
+        canvas.drawCircle(p.x, py, p.radius, fill)
         fill.color = Color.rgb(38, 50, 56)
-        canvas.drawCircle(p.x + 8f * p.facing, p.y - 6f, 4.5f, fill)
-        canvas.drawCircle(p.x + 16f * p.facing, p.y - 6f, 4.5f, fill)
+        canvas.drawCircle(p.x + 8f * p.facing, py - 6f, 4.5f, fill)
+        canvas.drawCircle(p.x + 16f * p.facing, py - 6f, 4.5f, fill)
         stroke.color = Color.rgb(96, 125, 139)
         stroke.strokeWidth = 4f
-        canvas.drawCircle(p.x, p.y, p.radius, stroke)
+        canvas.drawCircle(p.x, py, p.radius, stroke)
     }
 
     private fun drawSpinEffect(canvas: Canvas) {
@@ -343,9 +433,10 @@ class Renderer(private val game: Game) {
 
     private fun drawOrbitBlades(canvas: Canvas) {
         val w = game.player.weapons.firstOrNull { it.type == WeaponType.ORBIT } ?: return
-        val count = WeaponBalance.orbitCount(w.level)
-        val radius = WeaponBalance.orbitRadius(w.level) * game.player.mult(Stat.AREA)
-        fill.color = WeaponType.ORBIT.color
+        val count = WeaponBalance.orbitCount(w.level) + (if (w.evolved) 3 else 0)
+        val radius = WeaponBalance.orbitRadius(w.level) * game.player.mult(Stat.AREA) *
+            (if (w.evolved) 1.3f else 1f)
+        fill.color = w.displayColor
         for (i in 0 until count) {
             val a = w.orbitAngle + i * (Math.PI.toFloat() * 2f / count)
             val bx = game.player.x + cos(a) * radius
@@ -357,21 +448,12 @@ class Renderer(private val game: Game) {
         }
     }
 
-    /** Коса и Жнец: большой клинок-полумесяц на конце рукояти. */
     private fun drawSweepBlades(canvas: Canvas) {
         for (w in game.player.weapons) {
-            val (blades, radius, color) = when (w.type) {
-                WeaponType.SCYTHE -> Triple(
-                    1, WeaponBalance.scytheRadius(w.level) * game.player.mult(Stat.AREA),
-                    WeaponType.SCYTHE.color,
-                )
-                WeaponType.REAPER -> Triple(
-                    WeaponBalance.REAPER_BLADES,
-                    WeaponBalance.REAPER_RADIUS * game.player.mult(Stat.AREA),
-                    WeaponType.REAPER.color,
-                )
-                else -> continue
-            }
+            if (w.type != WeaponType.SCYTHE) continue
+            val blades = if (w.evolved) 2 else 1
+            val radius = WeaponBalance.scytheRadius(w.level) * game.player.mult(Stat.AREA)
+            val color = w.displayColor
             for (b in 0 until blades) {
                 val a = w.orbitAngle + b * (Math.PI.toFloat() * 2f / blades)
                 val bx = game.player.x + cos(a) * radius
@@ -379,7 +461,6 @@ class Renderer(private val game: Game) {
                 stroke.color = (color and 0x00FFFFFF) or 0x55000000
                 stroke.strokeWidth = 6f
                 canvas.drawLine(game.player.x, game.player.y, bx, by, stroke)
-                // След взмаха.
                 stroke.color = (color and 0x00FFFFFF) or 0x44000000
                 stroke.strokeWidth = 26f
                 val deg = a * 180f / Math.PI.toFloat()
@@ -404,7 +485,6 @@ class Renderer(private val game: Game) {
             fill.color = p.color
             when (p.kind) {
                 ProjKind.BANANA -> {
-                    // Вращающийся полумесяц.
                     canvas.save()
                     canvas.rotate(p.age * 720f, p.x, p.y)
                     val r = RectF(p.x - 16f, p.y - 16f, p.x + 16f, p.y + 16f)
@@ -421,6 +501,16 @@ class Renderer(private val game: Game) {
                 }
                 else -> canvas.drawCircle(p.x, p.y, p.radius, fill)
             }
+        }
+    }
+
+    private fun drawEnemyShots(canvas: Canvas) {
+        for (p in game.enemyShots) {
+            fill.color = p.color
+            canvas.drawCircle(p.x, p.y, p.radius, fill)
+            stroke.color = Color.WHITE
+            stroke.strokeWidth = 2.5f
+            canvas.drawCircle(p.x, p.y, p.radius, stroke)
         }
     }
 
@@ -450,6 +540,14 @@ class Renderer(private val game: Game) {
                 x = nx
                 y = ny
             }
+        }
+    }
+
+    private fun drawParticles(canvas: Canvas) {
+        for (p in game.particles) {
+            val t = (p.life / p.maxLife).coerceIn(0f, 1f)
+            fill.color = (p.color and 0x00FFFFFF) or ((255 * t).toInt() shl 24)
+            canvas.drawCircle(p.x, p.y, p.size * t, fill)
         }
     }
 
@@ -487,7 +585,6 @@ class Renderer(private val game: Game) {
         text.textAlign = Paint.Align.LEFT
         canvas.drawText("Ур. ${g.player.level}", 24f + hpW + 18f, 54f, text)
 
-        // Золото.
         fill.color = Color.rgb(255, 193, 7)
         canvas.drawCircle(36f, 90f, 12f, fill)
         text.color = Color.rgb(255, 213, 79)
@@ -502,7 +599,45 @@ class Renderer(private val game: Game) {
         canvas.drawText(String.format("%02d:%02d", m, s), g.screenW / 2f, 70f, text)
         text.textSize = 24f
         text.color = Color.rgb(255, 171, 145)
-        canvas.drawText("Убито: ${g.kills}", g.screenW / 2f, 100f, text)
+        canvas.drawText(
+            "Уровень ${g.gameLevel}: ${g.levelDef.name} • Убито: ${g.kills}",
+            g.screenW / 2f, 100f, text,
+        )
+
+        // До босса / полоса здоровья босса.
+        val boss = g.boss
+        if (boss != null) {
+            val bw = g.screenW * 0.44f
+            val top = 116f
+            fill.color = 0x88000000.toInt()
+            canvas.drawRoundRect(
+                RectF(g.screenW / 2f - bw / 2 - 6f, top - 6f, g.screenW / 2f + bw / 2 + 6f, top + 30f),
+                8f, 8f, fill,
+            )
+            fill.color = Color.rgb(60, 20, 20)
+            canvas.drawRoundRect(
+                RectF(g.screenW / 2f - bw / 2, top, g.screenW / 2f + bw / 2, top + 24f), 6f, 6f, fill,
+            )
+            fill.color = g.levelDef.bossColor
+            canvas.drawRoundRect(
+                RectF(
+                    g.screenW / 2f - bw / 2, top,
+                    g.screenW / 2f - bw / 2 + bw * (boss.hp / boss.maxHp).coerceIn(0f, 1f), top + 24f,
+                ),
+                6f, 6f, fill,
+            )
+            text.color = Color.WHITE
+            text.textSize = 22f
+            canvas.drawText(g.levelDef.bossName, g.screenW / 2f, top + 19f, text)
+        } else if (g.time < BOSS_TIME) {
+            text.color = Color.rgb(144, 164, 174)
+            text.textSize = 22f
+            val left = (BOSS_TIME - g.time).toInt()
+            canvas.drawText(
+                "Босс через ${left / 60}:${String.format("%02d", left % 60)}",
+                g.screenW / 2f, 128f, text,
+            )
+        }
 
         fill.color = 0x55000000
         canvas.drawRoundRect(game.pauseRect, 12f, 12f, fill)
@@ -530,7 +665,6 @@ class Renderer(private val game: Game) {
         }
     }
 
-    /** Собранные предметы — ряд цветных точек по тиру внизу справа. */
     private fun drawInventory(canvas: Canvas) {
         val items = game.player.items
         if (items.isEmpty()) return
@@ -558,7 +692,6 @@ class Renderer(private val game: Game) {
         }
     }
 
-    /** Миникарта всей (ограниченной) карты с объектами. */
     private fun drawMinimap(canvas: Canvas) {
         val size = 250f
         val left = game.screenW - size - 24f
@@ -579,34 +712,37 @@ class Renderer(private val game: Game) {
             when (obj) {
                 is Chest -> {
                     fill.color = Color.rgb(255, 213, 79)
-                    canvas.drawRect(
-                        mx(obj.x) - 4f, my(obj.y) - 4f, mx(obj.x) + 4f, my(obj.y) + 4f, fill,
-                    )
+                    canvas.drawRect(mx(obj.x) - 3f, my(obj.y) - 3f, mx(obj.x) + 3f, my(obj.y) + 3f, fill)
                 }
                 is Shrine -> {
                     fill.color = obj.kind.color
-                    canvas.drawCircle(mx(obj.x), my(obj.y), 5f, fill)
+                    canvas.drawCircle(mx(obj.x), my(obj.y), 4f, fill)
                 }
                 is Statue -> {
                     fill.color = Color.rgb(178, 223, 219)
-                    canvas.drawCircle(mx(obj.x), my(obj.y), 5f, fill)
+                    canvas.drawCircle(mx(obj.x), my(obj.y), 4f, fill)
                 }
                 is GoldPile -> {
                     fill.color = Color.rgb(255, 160, 0)
-                    canvas.drawCircle(mx(obj.x), my(obj.y), 2.5f, fill)
+                    canvas.drawCircle(mx(obj.x), my(obj.y), 2f, fill)
                 }
             }
         }
-        // Элита на миникарте.
         for (e in game.enemies) {
             if (e.type == EnemyType.ELITE) {
                 fill.color = Color.rgb(255, 82, 82)
-                canvas.drawCircle(mx(e.x), my(e.y), 5f, fill)
+                canvas.drawCircle(mx(e.x), my(e.y), 4f, fill)
+            }
+            if (e.type == EnemyType.BOSS) {
+                fill.color = game.levelDef.bossColor
+                canvas.drawCircle(mx(e.x), my(e.y), 7f, fill)
+                stroke.color = Color.WHITE
+                stroke.strokeWidth = 2f
+                canvas.drawCircle(mx(e.x), my(e.y), 7f, stroke)
             }
         }
-        // Игрок.
         fill.color = Color.WHITE
-        canvas.drawCircle(mx(game.player.x), my(game.player.y), 6f, fill)
+        canvas.drawCircle(mx(game.player.x), my(game.player.y), 5f, fill)
     }
 
     // ------------------------------------------------------------------
@@ -637,16 +773,12 @@ class Renderer(private val game: Game) {
         text.textSize = 40f
         canvas.drawText("${g.meta.gold} з", g.screenW - 40f, 84f, text)
 
-        // Заголовки колонок.
         text.textAlign = Paint.Align.LEFT
         text.textSize = 26f
         text.color = Color.WHITE
         canvas.drawText("ОРУЖИЕ", menu.weaponCells[0].left, 158f, text)
         val discovered = menu.allItems.count { g.meta.isDiscovered(it.id) }
-        canvas.drawText(
-            "ПРЕДМЕТЫ ($discovered/${menu.allItems.size})",
-            menu.itemArea.left, 158f, text,
-        )
+        canvas.drawText("ПРЕДМЕТЫ ($discovered/${menu.allItems.size})", menu.itemArea.left, 158f, text)
         canvas.drawText(
             "ФОЛИАНТЫ (${g.meta.selectedTomes.size}/$MAX_TOMES)",
             menu.tomeCells[0].left, 158f, text,
@@ -687,7 +819,7 @@ class Renderer(private val game: Game) {
             canvas.drawText(type.label, r.centerX(), r.bottom + 19f, text)
         }
 
-        // --- Предметы (скроллируемый полный каталог) ---
+        // --- Предметы (скроллируемый каталог, тап = вкл/выкл в пуле) ---
         canvas.save()
         canvas.clipRect(
             menu.itemArea.left - 6f, menu.itemArea.top - 6f,
@@ -719,7 +851,6 @@ class Renderer(private val game: Game) {
             if (found) {
                 text.color = if (enabled) Color.WHITE else 0x77FFFFFF
                 canvas.drawText(item.name.take(2), r.centerX(), r.centerY() + 9f, text)
-                // Выключенный из пула — перечёркнут.
                 if (!enabled) {
                     stroke.color = Color.rgb(239, 83, 80)
                     stroke.strokeWidth = 4f
@@ -731,7 +862,6 @@ class Renderer(private val game: Game) {
             }
         }
         canvas.restore()
-        // Полоса прокрутки.
         val contentH = ((menu.allItems.size + menu.itemCols - 1) / menu.itemCols) * (menu.cell + menu.gap)
         if (contentH > menu.itemArea.height()) {
             val frac = menu.itemArea.height() / contentH
@@ -768,7 +898,34 @@ class Renderer(private val game: Game) {
             canvas.drawText(tome.label.removePrefix("Фолиант "), r.centerX(), r.bottom + 19f, text)
         }
 
-        // --- Инфо-панель: название + понятное описание ---
+        // --- Уровни (этажи) ---
+        text.textAlign = Paint.Align.CENTER
+        text.textSize = 22f
+        text.color = Color.WHITE
+        canvas.drawText(
+            "УРОВЕНЬ: ${LEVELS[(g.meta.selectedLevel - 1).coerceIn(0, LEVELS.size - 1)].name}",
+            g.screenW / 2f, menu.levelCells[0].top - 12f, text,
+        )
+        for (i in menu.levelCells.indices) {
+            val def = LEVELS[i]
+            val r = menu.levelCells[i]
+            val unlocked = def.index <= g.meta.unlockedLevel
+            val selected = g.meta.selectedLevel == def.index
+            fill.color = if (unlocked) (def.bossColor and 0x00FFFFFF) or 0x55000000 else 0x33000000
+            canvas.drawRoundRect(r, 10f, 10f, fill)
+            stroke.strokeWidth = if (selected) 5f else 3f
+            stroke.color = when {
+                selected -> Color.WHITE
+                unlocked -> def.bossColor
+                else -> 0x44FFFFFF
+            }
+            canvas.drawRoundRect(r, 10f, 10f, stroke)
+            text.textSize = 26f
+            text.color = if (unlocked) Color.WHITE else 0x66FFFFFF
+            canvas.drawText(if (unlocked) "${def.index}" else "🔒", r.centerX(), r.centerY() + 9f, text)
+        }
+
+        // --- Инфо-панель ---
         fill.color = 0x44000000
         canvas.drawRoundRect(menu.infoArea, 12f, 12f, fill)
         text.textAlign = Paint.Align.LEFT
@@ -782,7 +939,6 @@ class Renderer(private val game: Game) {
             var line2 = ""
             val maxW = menu.infoArea.width() - 40f
             if (text.measureText(line1) > maxW) {
-                // Простое деление на две строки по словам.
                 val words = menu.infoDesc.split(" ")
                 line1 = ""
                 for (w in words) {
@@ -800,7 +956,6 @@ class Renderer(private val game: Game) {
             }
         }
 
-        // Кнопка старта.
         fill.color = Color.rgb(46, 125, 50)
         canvas.drawRoundRect(menu.startRect, 18f, 18f, fill)
         stroke.color = Color.rgb(129, 199, 132)
@@ -843,7 +998,6 @@ class Renderer(private val game: Game) {
             text.textSize = 30f
             drawWrapped(canvas, opt.title, r.centerX(), r.top + 140f, r.width() - 36f)
 
-            // Описание: каждый пункт "что изменится" с новой строки.
             text.color = Color.rgb(207, 216, 220)
             text.textSize = 24f
             var y = r.top + 225f
@@ -884,11 +1038,11 @@ class Renderer(private val game: Game) {
             canvas.drawText("+${(v * 100).toInt()}% ${stat.label}", r.centerX(), y, text)
             y += 44f
         }
-        if (item.special != Special.NONE) {
+        if (item.specialText.isNotEmpty()) {
             text.color = Color.rgb(255, 213, 79)
             text.textSize = 25f
             y += 12f
-            drawWrapped(canvas, item.special.text, r.centerX(), y, r.width() - 60f)
+            drawWrapped(canvas, item.specialText, r.centerX(), y, r.width() - 60f)
         }
 
         text.color = Color.rgb(255, 213, 79)
@@ -918,13 +1072,49 @@ class Renderer(private val game: Game) {
         val m = (game.time / 60).toInt()
         val s = (game.time % 60).toInt()
         canvas.drawText(
-            String.format("Выжили %02d:%02d — убито %d — уровень %d", m, s, game.kills, game.player.level),
+            String.format(
+                "Уровень %d • Выжили %02d:%02d • убито %d",
+                game.gameLevel, m, s, game.kills,
+            ),
             game.screenW / 2f, game.screenH / 2f - 40f, text,
         )
         text.color = Color.rgb(255, 213, 79)
         canvas.drawText("Золото в копилку: +${game.gold}", game.screenW / 2f, game.screenH / 2f + 20f, text)
         text.textSize = 28f
         canvas.drawText("Коснитесь, чтобы вернуться в меню", game.screenW / 2f, game.screenH / 2f + 90f, text)
+    }
+
+    private fun drawVictory(canvas: Canvas) {
+        dimScreen(canvas)
+        text.textAlign = Paint.Align.CENTER
+        text.color = Color.rgb(255, 213, 79)
+        text.textSize = 72f
+        canvas.drawText("УРОВЕНЬ ПРОЙДЕН!", game.screenW / 2f, game.screenH / 2f - 140f, text)
+        text.color = Color.WHITE
+        text.textSize = 34f
+        canvas.drawText(
+            "${game.levelDef.bossName} повержен!",
+            game.screenW / 2f, game.screenH / 2f - 60f, text,
+        )
+        text.textSize = 30f
+        text.color = Color.rgb(255, 213, 79)
+        canvas.drawText(
+            "Награда: +${game.victoryReward} золота (всего +${game.gold})",
+            game.screenW / 2f, game.screenH / 2f, text,
+        )
+        if (game.gameLevel < LEVELS.size) {
+            text.color = Color.rgb(129, 199, 132)
+            canvas.drawText(
+                "Открыт уровень ${game.gameLevel + 1}: ${LEVELS[game.gameLevel].name}",
+                game.screenW / 2f, game.screenH / 2f + 55f, text,
+            )
+        } else {
+            text.color = Color.rgb(129, 199, 132)
+            canvas.drawText("Все уровни пройдены — вы легенда!", game.screenW / 2f, game.screenH / 2f + 55f, text)
+        }
+        text.textSize = 28f
+        text.color = Color.WHITE
+        canvas.drawText("Коснитесь, чтобы вернуться в меню", game.screenW / 2f, game.screenH / 2f + 130f, text)
     }
 
     private fun drawWrapped(canvas: Canvas, str: String, cx: Float, y: Float, maxW: Float) {

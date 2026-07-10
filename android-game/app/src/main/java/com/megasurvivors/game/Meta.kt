@@ -37,6 +37,10 @@ class MetaStore(context: Context) {
 
     var bestTime: Int = prefs.getInt("best_time", 0)
 
+    /** Максимальный открытый уровень (этаж). */
+    var unlockedLevel: Int = prefs.getInt("unlocked_level", 1)
+    var selectedLevel: Int = prefs.getInt("sel_level", 1)
+
     fun isDiscovered(id: String): Boolean = discoveredItems.contains(id)
 
     fun isEnabled(id: String): Boolean = !disabledItems.contains(id)
@@ -67,6 +71,8 @@ class MetaStore(context: Context) {
             .putStringSet("discovered", discoveredItems)
             .putStringSet("disabled", disabledItems)
             .putInt("best_time", bestTime)
+            .putInt("unlocked_level", unlockedLevel)
+            .putInt("sel_level", selectedLevel)
             .apply()
     }
 

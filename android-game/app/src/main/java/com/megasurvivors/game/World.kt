@@ -6,7 +6,7 @@ import kotlin.random.Random
 const val CHUNK_SIZE = 1400f
 
 /** Полукрай карты: мир ограничен квадратом [-WORLD_HALF, WORLD_HALF]. */
-const val WORLD_HALF = 4200f
+const val WORLD_HALF = 8400f
 
 /** Типы шрайнов: какой временный бафф даёт захват. */
 enum class ShrineKind(

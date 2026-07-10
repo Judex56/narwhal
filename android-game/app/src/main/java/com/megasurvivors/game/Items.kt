@@ -15,9 +15,6 @@ enum class Tier(val label: String, val color: Int, val baseWeight: Float) {
 /** Особые эффекты предметов, которые нельзя выразить голыми статами. */
 enum class Special(val text: String) {
     NONE(""),
-    FROST_CUBE("Катализатор: Морозная аура 20 ур. → ЛЕДЯНАЯ БУРЯ"),
-    PLAGUE_HEART("Катализатор: Ядовитые ножи 20 ур. → ЧУМНОЕ ОБЛАКО"),
-    DARK_SICKLE("Катализатор: Коса 20 ур. → ЖНЕЦ"),
     LIFESTEAL("+1 HP за каждое убийство"),
     REGEN("+1 HP в секунду"),
     DODGE("10% шанс полностью избежать урона"),
@@ -33,11 +30,10 @@ class ItemDef(
     val tier: Tier,
     val stats: Map<Stat, Float>,
     val special: Special = Special.NONE,
+    /** Катализатор эволюции этого оружия (20 ур. → супер-форма). */
+    val catalystFor: WeaponType? = null,
 ) {
-    val isCatalyst: Boolean
-        get() = special == Special.FROST_CUBE ||
-            special == Special.PLAGUE_HEART ||
-            special == Special.DARK_SICKLE
+    val isCatalyst: Boolean get() = catalystFor != null
 
     /** "+15% урон, +10% броня" */
     val statsText: String
@@ -45,12 +41,21 @@ class ItemDef(
             "+${(it.value * 100).toInt()}% ${it.key.label.lowercase()}"
         }
 
+    /** Текст особого эффекта (спец или катализатор). */
+    val specialText: String
+        get() = when {
+            catalystFor != null ->
+                "Катализатор: ${catalystFor.label} 20 ур. → ${EVOLUTIONS.getValue(catalystFor).label}"
+            special != Special.NONE -> special.text
+            else -> ""
+        }
+
     /** Полное описание: статы + особый эффект. */
     val fullDesc: String
         get() {
             val parts = ArrayList<String>()
             if (stats.isNotEmpty()) parts.add(statsText)
-            if (special != Special.NONE) parts.add(special.text)
+            if (specialText.isNotEmpty()) parts.add(specialText)
             return parts.joinToString("  •  ")
         }
 }
@@ -68,7 +73,8 @@ object ItemPool {
         tier: Tier,
         vararg stats: Pair<Stat, Float>,
         special: Special = Special.NONE,
-    ) = ItemDef(id, name, tier, mapOf(*stats), special)
+        catalystFor: WeaponType? = null,
+    ) = ItemDef(id, name, tier, mapOf(*stats), special, catalystFor)
 
     val catalog: List<ItemDef> = listOf(
         // ------------------- ОБЫЧНЫЕ (12) -------------------
@@ -111,10 +117,23 @@ object ItemPool {
         item("gem_eye", "Глаз василиска", Tier.RARE, Stat.CRIT_CHANCE to 0.06f, Stat.CRIT_DMG to 0.20f),
         item("ledger", "Гроссбух торговца", Tier.RARE, Stat.GOLD_GAIN to 0.25f, Stat.XP_GAIN to 0.10f),
 
-        // ------------------- МИСТИЧЕСКИЕ (8) -------------------
-        item("frost_cube", "Морозный куб", Tier.MYSTIC, Stat.AREA to 0.10f, special = Special.FROST_CUBE),
-        item("plague_heart", "Сердце чумы", Tier.MYSTIC, Stat.DAMAGE to 0.10f, special = Special.PLAGUE_HEART),
-        item("dark_sickle", "Тёмный серп", Tier.MYSTIC, Stat.DAMAGE to 0.10f, special = Special.DARK_SICKLE),
+        // --------- МИСТИЧЕСКИЕ: 14 катализаторов (по одному на оружие) ---------
+        item("steel_quill", "Стальное перо", Tier.MYSTIC, Stat.PROJ_SPEED to 0.10f, catalystFor = WeaponType.DART),
+        item("blade_ring", "Кольцо клинков", Tier.MYSTIC, Stat.AREA to 0.10f, catalystFor = WeaponType.ORBIT),
+        item("infernal_ember", "Уголь инферно", Tier.MYSTIC, Stat.DAMAGE to 0.10f, catalystFor = WeaponType.AURA),
+        item("storm_core", "Сердце бури", Tier.MYSTIC, Stat.COOLDOWN to 0.10f, catalystFor = WeaponType.LIGHTNING),
+        item("dark_sickle", "Тёмный серп", Tier.MYSTIC, Stat.DAMAGE to 0.10f, catalystFor = WeaponType.SCYTHE),
+        item("frost_cube", "Морозный куб", Tier.MYSTIC, Stat.AREA to 0.10f, catalystFor = WeaponType.FROST_AURA),
+        item("gyroscope", "Гироскоп", Tier.MYSTIC, Stat.ARMOR to 0.10f, catalystFor = WeaponType.COUNTER_SPIN),
+        item("plague_heart", "Сердце чумы", Tier.MYSTIC, Stat.DAMAGE to 0.10f, catalystFor = WeaponType.POISON),
+        item("red_button", "Красная кнопка", Tier.MYSTIC, Stat.DAMAGE to 0.10f, catalystFor = WeaponType.NUKE),
+        item("golden_banana", "Золотой банан", Tier.MYSTIC, Stat.GOLD_GAIN to 0.15f, catalystFor = WeaponType.BANANA),
+        item("mind_prism", "Призма разума", Tier.MYSTIC, Stat.CRIT_CHANCE to 0.06f, catalystFor = WeaponType.PSI_BLADES),
+        item("comet_shard", "Осколок кометы", Tier.MYSTIC, Stat.AREA to 0.10f, catalystFor = WeaponType.METEOR),
+        item("powder_keg", "Пороховая бочка", Tier.MYSTIC, Stat.DAMAGE to 0.10f, catalystFor = WeaponType.SHOTGUN),
+        item("hunger_seal", "Печать голода", Tier.MYSTIC, Stat.CRIT_DMG to 0.15f, catalystFor = WeaponType.GREED_BLADE),
+
+        // ------------------- МИСТИЧЕСКИЕ: обычные (5) -------------------
         item("storm_eye", "Око бури", Tier.MYSTIC, Stat.CRIT_CHANCE to 0.15f, Stat.CRIT_DMG to 0.30f),
         item("chronos", "Часы Хроноса", Tier.MYSTIC, Stat.COOLDOWN to 0.20f, Stat.MOVE_SPEED to 0.10f),
         item("barbs", "Клинковый панцирь", Tier.MYSTIC, Stat.ARMOR to 0.15f, Stat.MAX_HP to 0.10f, special = Special.THORNS),
@@ -143,7 +162,7 @@ object ItemPool {
 
     fun byId(id: String): ItemDef? = catalog.firstOrNull { it.id == id }
 
-    /** Что открыто с самого начала: все обычные + база редких + катализаторы. */
+    /** Что открыто с самого начала: все обычные + база редких + 3 катализатора. */
     val defaultDiscovered: Set<String> =
         catalog.filter { it.tier == Tier.COMMON }.map { it.id }.toSet() +
             setOf("fang", "clover", "goblet", "frost_cube", "plague_heart", "dark_sickle")
@@ -173,7 +192,6 @@ object ItemPool {
 
         val pool = catalog.filter { it.tier == tier && allowed(it) }
         if (pool.isNotEmpty()) return pool.random(rng)
-        // В тире всё выключено/собрано — берём из всего каталога.
         val fallback = catalog.filter { !it.isCatalyst && allowed(it) }
         if (fallback.isNotEmpty()) return fallback.random(rng)
         return catalog.filter { !it.isCatalyst }.random(rng)
