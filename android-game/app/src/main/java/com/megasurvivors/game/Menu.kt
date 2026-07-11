@@ -229,16 +229,16 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
     }
 
     private fun tapTome(tome: Tome) {
-        // Как предметы: сколько угодно, действуют весь забег.
+        // Можно взять сколько угодно; качаются в забеге как оружие.
         if (isTomeSelected(tome)) {
             meta.selectedTomes.remove(tome.name)
             infoTitle = "${tome.label} — убран"
         } else {
             meta.selectedTomes.add(tome.name)
-            infoTitle = "${tome.label} — взят в забег"
+            infoTitle = "${tome.label} — взят в забег (стартует на 1 ур.)"
         }
         meta.save()
         infoColor = tome.color
-        infoDesc = "${tome.desc} • Действует весь забег"
+        infoDesc = "${tome.perLevelText} • Качается на левел-апах до $MAX_TOME_LEVEL ур., как оружие"
     }
 }

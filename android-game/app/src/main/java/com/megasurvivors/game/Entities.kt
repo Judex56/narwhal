@@ -18,8 +18,8 @@ class Player {
     /** Собранные предметы (Megabonk-стиль: копятся списком). */
     val items = ArrayList<ItemDef>()
     val buffs = ArrayList<Buff>()
-    /** Взятые в забег фолианты — плоские пассивки на весь забег. */
-    val tomes = HashSet<Tome>()
+    /** Взятые в забег фолианты и их уровни (качаются как оружие). */
+    val tomes = HashMap<Tome, Int>()
     /** Мелкие постоянные бонусы с запасных карточек левел-апа. */
     val forged = HashMap<Stat, Float>()
 
@@ -28,7 +28,7 @@ class Player {
 
     fun bonus(stat: Stat): Float {
         var sum = forged[stat] ?: 0f
-        for (tome in tomes) sum += tome.stats[stat] ?: 0f
+        for ((tome, lvl) in tomes) sum += (tome.stats[stat] ?: 0f) * lvl
         for (item in items) sum += item.stats[stat] ?: 0f
         for (buff in buffs) sum += buff.stats[stat] ?: 0f
         return sum

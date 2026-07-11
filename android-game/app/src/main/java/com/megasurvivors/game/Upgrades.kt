@@ -35,6 +35,7 @@ object UpgradePool {
 
     fun rollOptions(player: Player, rng: Random): List<UpgradeOption> {
         val options = ArrayList<UpgradeOption>()
+        // Взятое оружие.
         for (w in player.weapons) {
             if (w.level < MAX_WEAPON_LEVEL) {
                 options.add(
@@ -43,6 +44,23 @@ object UpgradePool {
                         WeaponBalance.upgradeDesc(w.type, w.level),
                         w.displayColor,
                     ) { p -> p.weapons.first { it.type == w.type }.level++ },
+                )
+            }
+        }
+        // Взятые фолианты — та же механика, что и у оружия.
+        for ((tome, lvl) in player.tomes) {
+            if (lvl < MAX_TOME_LEVEL) {
+                options.add(
+                    UpgradeOption(
+                        "${tome.label}: ур. $lvl → ${lvl + 1}",
+                        tome.upgradeDesc(lvl),
+                        tome.color,
+                    ) { p ->
+                        val cur = p.tomes[tome] ?: 0
+                        p.tomes[tome] = cur + 1
+                        val hpGain = tome.stats[Stat.MAX_HP]
+                        if (hpGain != null) p.hp += p.maxHp * hpGain * 0.5f
+                    },
                 )
             }
         }

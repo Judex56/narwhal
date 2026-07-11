@@ -130,7 +130,7 @@ class Game(
         }
         for (name in meta.selectedTomes) {
             val tome = Tome.entries.firstOrNull { it.name == name } ?: continue
-            player.tomes.add(tome)
+            player.tomes[tome] = 1
         }
         player.hp = player.maxHp
 
