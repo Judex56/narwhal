@@ -28,6 +28,20 @@ class Game(
     var gameLevel = 1
     var levelDef: LevelDef = LEVELS[0]
 
+    /** Активные моды текущего забега. */
+    var activeMods: Set<Mod> = emptySet()
+    fun hasMod(m: Mod) = activeMods.contains(m)
+
+    /** Секунда выхода босса (мод «Спешка» сдвигает на 10:00). */
+    var bossAt = BOSS_TIME
+    /** Текущая полуширина зоны (мод «Зона»). */
+    var zoneHalf = WORLD_HALF
+    private var zoneHintTimer = 0f
+    /** Соперник (мод «Соперник»). */
+    var rival: Enemy? = null
+    var victoryReason = ""
+    var defeatReason = ""
+
     val enemies = ArrayList<Enemy>()
     val projectiles = ArrayList<Projectile>()
     /** Снаряды врагов (босс): бьют по игроку. */
@@ -82,10 +96,12 @@ class Game(
     /** Цена сундука растёт с каждым открытым; Отмычка и Идол дают скидку. */
     val chestCost: Int
         get() {
+            if (hasMod(Mod.CURSED_CHESTS)) return 0
             val base = 25f + 15f * chestsOpened
             val discount = (1f - 0.15f * player.countSpecial(Special.CHEST_DISCOUNT))
                 .coerceAtLeast(0.4f)
-            return (base * discount).toInt()
+            val rush = if (hasMod(Mod.GOLD_RUSH)) 1.5f else 1f
+            return (base * discount * rush).toInt()
         }
 
     // Множители сложности: минуты забега × уровень (этаж).
@@ -132,6 +148,31 @@ class Game(
             val tome = Tome.entries.firstOrNull { it.name == name } ?: continue
             player.tomes[tome] = 1
         }
+        // Моды забега: статы вешаем постоянными баффами (видны в HUD).
+        activeMods = Mod.entries.filter { meta.selectedMods.contains(it.name) }.toSet()
+        for (mod in activeMods) {
+            if (mod.statBuff.isNotEmpty()) {
+                player.buffs.add(Buff(mod.label, mod.statBuff, Float.POSITIVE_INFINITY, mod.color))
+            }
+        }
+        bossAt = if (hasMod(Mod.TIMEWARP)) 600f else BOSS_TIME
+        zoneHalf = WORLD_HALF
+        victoryReason = ""
+        defeatReason = ""
+        rival = null
+        if (hasMod(Mod.RIVAL)) {
+            val a = rng.nextFloat() * Math.PI.toFloat() * 2f
+            val r = Enemy(
+                EnemyType.RIVAL,
+                (cos(a) * 2500f).coerceIn(-WORLD_HALF + 200f, WORLD_HALF - 200f),
+                (sin(a) * 2500f).coerceIn(-WORLD_HALF + 200f, WORLD_HALF - 200f),
+                hpScale = 1f + levelDef.hpMult * 0.4f,
+                dmgScale = levelDef.dmgMult,
+            )
+            enemies.add(r)
+            rival = r
+        }
+
         player.hp = player.maxHp
 
         time = 0f
@@ -201,6 +242,20 @@ class Game(
         if (nukeFlash > 0f) nukeFlash -= dt
         if (chestHintTimer > 0f) chestHintTimer -= dt
 
+        // Мод «Зона»: спустя минуту карта начинает сжиматься.
+        if (hasMod(Mod.SHRINKING) && time > 60f) {
+            zoneHalf = (WORLD_HALF - (time - 60f) * 8.1f).coerceAtLeast(1600f)
+            val outside = abs(player.x) > zoneHalf || abs(player.y) > zoneHalf
+            if (outside) {
+                player.hp -= player.maxHp * 0.04f * dt
+                zoneHintTimer -= dt
+                if (zoneHintTimer <= 0f) {
+                    zoneHintTimer = 1f
+                    addText(player.x, player.y - 60f, "ВНЕ ЗОНЫ!", Color.rgb(255, 87, 34), 32f)
+                }
+            }
+        }
+
         if (player.hp <= 0f) {
             if (player.countSpecial(Special.REVIVE) > revivesUsed) {
                 revivesUsed++
@@ -244,7 +299,9 @@ class Game(
         regenTimer += dt
         if (regenTimer >= 1f) {
             regenTimer = 0f
-            val regen = 0.5f + player.countSpecial(Special.REGEN) * 1f
+            // Вампиризм отключает естественную регенерацию.
+            val natural = if (hasMod(Mod.VAMPIRE)) 0f else 0.5f
+            val regen = natural + player.countSpecial(Special.REGEN) * 1f
             player.hp = min(player.maxHp, player.hp + regen)
         }
     }
@@ -257,7 +314,9 @@ class Game(
             player.iFrames = 0.3f
             return
         }
-        val dmg = player.reduceDamage(raw)
+        var incoming = raw
+        if (hasMod(Mod.GLASS)) incoming *= 2f
+        val dmg = player.reduceDamage(incoming)
         player.hp -= dmg
         player.iFrames = 0.5f
         addText(player.x, player.y - 40f, "-${dmg.toInt()}", Color.rgb(255, 82, 82), 30f)
@@ -293,7 +352,12 @@ class Game(
     // Оружие (evolved = эволюционная супер-форма с множителями).
     // ------------------------------------------------------------------
     private fun updateWeapons(dt: Float) {
-        val dmgMult = player.mult(Stat.DAMAGE)
+        var dmgMult = player.mult(Stat.DAMAGE)
+        if (hasMod(Mod.GLASS)) dmgMult *= 2f
+        if (hasMod(Mod.BERSERK)) {
+            // Чем меньше HP, тем больнее бьём (до +100%).
+            dmgMult *= 1f + (1f - player.hp / player.maxHp).coerceIn(0f, 1f)
+        }
         val areaMult = player.mult(Stat.AREA)
         val cdFactor = player.cooldownFactor()
 
@@ -678,21 +742,25 @@ class Game(
     // Босс.
     // ------------------------------------------------------------------
     private fun spawnBossIfTime() {
-        if (bossSpawned || time < BOSS_TIME) return
+        if (bossSpawned || time < bossAt) return
         bossSpawned = true
-        val (x, y) = spawnPoint()
-        val b = Enemy(
-            EnemyType.BOSS, x, y,
-            hpScale = levelDef.hpMult * levelDef.bossHpMult,
-            dmgScale = levelDef.dmgMult,
-            speedScale = 1f,
-        )
-        enemies.add(b)
-        boss = b
+        val count = if (hasMod(Mod.TWIN_BOSSES)) 2 else 1
+        repeat(count) {
+            val (x, y) = spawnPoint()
+            val b = Enemy(
+                EnemyType.BOSS, x, y,
+                hpScale = levelDef.hpMult * levelDef.bossHpMult,
+                dmgScale = levelDef.dmgMult,
+                speedScale = 1f,
+            )
+            enemies.add(b)
+            if (boss == null) boss = b
+        }
         shake(18f, 0.8f)
         addText(
             player.x, player.y - 220f,
-            "БОСС: ${levelDef.bossName}!", levelDef.bossColor, 52f, 3f,
+            if (count == 2) "ДВА БОССА: ${levelDef.bossName}!" else "БОСС: ${levelDef.bossName}!",
+            levelDef.bossColor, 52f, 3f,
         )
     }
 
@@ -724,6 +792,98 @@ class Game(
                 )
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Соперник: фармит карту, стреляет в игрока, охотится на босса.
+    // ------------------------------------------------------------------
+    private fun updateRival(e: Enemy, dt: Float) {
+        val bossTarget = if (bossSpawned) {
+            enemies.firstOrNull { it.type == EnemyType.BOSS && it.hp > 0f }
+        } else {
+            null
+        }
+        val dPlayer = dist(e.x, e.y, player.x, player.y)
+
+        // Куда идти: босс > дуэль с игроком > фарм по точкам.
+        val (tx, ty) = when {
+            bossTarget != null -> Pair(bossTarget.x, bossTarget.y)
+            dPlayer < 800f -> {
+                // Держит дистанцию ~420: отходит если близко, догоняет если далеко.
+                val d = dPlayer.coerceAtLeast(1f)
+                if (dPlayer < 380f) {
+                    Pair(e.x + (e.x - player.x) / d * 300f, e.y + (e.y - player.y) / d * 300f)
+                } else {
+                    Pair(player.x, player.y)
+                }
+            }
+            else -> {
+                e.rivalWayT -= dt
+                if (e.rivalWayT <= 0f || dist(e.x, e.y, e.rivalWayX, e.rivalWayY) < 120f) {
+                    e.rivalWayT = 6f
+                    val lim = if (hasMod(Mod.SHRINKING)) zoneHalf - 200f else WORLD_HALF - 200f
+                    e.rivalWayX = (rng.nextFloat() * 2f - 1f) * lim
+                    e.rivalWayY = (rng.nextFloat() * 2f - 1f) * lim
+                }
+                Pair(e.rivalWayX, e.rivalWayY)
+            }
+        }
+        val d = dist(e.x, e.y, tx, ty).coerceAtLeast(1f)
+        val lim = if (hasMod(Mod.SHRINKING)) zoneHalf else WORLD_HALF
+        e.x = (e.x + (tx - e.x) / d * e.effectiveSpeed * dt).coerceIn(-lim, lim)
+        e.y = (e.y + (ty - e.y) / d * e.effectiveSpeed * dt).coerceIn(-lim, lim)
+        if (tx > e.x + 5f) e.facing = 1f
+        if (tx < e.x - 5f) e.facing = -1f
+
+        // Фармит монстров вокруг себя (растёт от своих убийств).
+        e.rivalFarmT -= dt
+        if (e.rivalFarmT <= 0f) {
+            e.rivalFarmT = 0.9f
+            val dmg = 14f + minute * 6f + e.rivalKills * 0.15f
+            var hits = 0
+            for (m in enemies) {
+                if (m === e || m.type == EnemyType.BOSS || m.type == EnemyType.RIVAL) continue
+                if (dist(e.x, e.y, m.x, m.y) < 340f) {
+                    m.hp -= dmg
+                    m.hitFlash = 0.1f
+                    if (m.hp <= 0f) e.rivalKills++
+                    if (++hits >= 3) break
+                }
+            }
+        }
+
+        // Стреляет в игрока, когда тот рядом.
+        e.rivalShootT -= dt
+        if (e.rivalShootT <= 0f && dPlayer < 800f) {
+            e.rivalShootT = 1.4f
+            val a = atan2(player.y - e.y, player.x - e.x)
+            enemyShots.add(
+                Projectile(
+                    e.x, e.y, cos(a) * 520f, sin(a) * 520f,
+                    damage = (10f + minute * 3f + e.rivalKills * 0.05f) * levelDef.dmgMult,
+                    radius = 12f, pierce = 1, life = 2.5f,
+                    kind = ProjKind.DART, color = Color.rgb(0, 188, 212),
+                ),
+            )
+        }
+
+        // Бьёт босса: если добьёт раньше вас — вы проиграли гонку.
+        if (bossTarget != null && dist(e.x, e.y, bossTarget.x, bossTarget.y) < 600f) {
+            e.rivalBossT -= dt
+            if (e.rivalBossT <= 0f) {
+                e.rivalBossT = 1f
+                bossTarget.hp -= 30f + minute * 10f + e.rivalKills * 0.2f
+                bossTarget.hitFlash = 0.1f
+                if (bossTarget.hp <= 0f) {
+                    defeatReason = "Соперник убил босса первым!"
+                    state = GameState.GAME_OVER
+                    return
+                }
+            }
+        }
+
+        // Лёгкая регенерация, чтобы его нельзя было заковырять мимоходом.
+        e.hp = min(e.maxHp, e.hp + 5f * dt)
     }
 
     private fun updateEnemyShots(dt: Float) {
@@ -762,6 +922,7 @@ class Game(
             }
 
             if (e.type == EnemyType.BOSS) updateBoss(e, dt)
+            if (e.type == EnemyType.RIVAL) updateRival(e, dt)
 
             // Яд: тикающий урон раз в полсекунды.
             if (e.poisonStacks > 0 && e.poisonTimer > 0f) {
@@ -777,21 +938,23 @@ class Game(
                 if (e.poisonTimer <= 0f) e.poisonStacks = 0
             }
 
-            var tx = player.x
-            var ty = player.y
-            if (activeShrine != null && e.type != EnemyType.ELITE &&
-                e.type != EnemyType.BOSS && e.type != EnemyType.MINIBOSS &&
-                rngHash(e) % 3 == 0
-            ) {
-                tx = activeShrine.x
-                ty = activeShrine.y
+            if (e.type != EnemyType.RIVAL) {
+                var tx = player.x
+                var ty = player.y
+                if (activeShrine != null && e.type != EnemyType.ELITE &&
+                    e.type != EnemyType.BOSS && e.type != EnemyType.MINIBOSS &&
+                    rngHash(e) % 3 == 0
+                ) {
+                    tx = activeShrine.x
+                    ty = activeShrine.y
+                }
+                val d = dist(e.x, e.y, tx, ty).coerceAtLeast(1f)
+                val sp = e.effectiveSpeed
+                e.x = (e.x + (tx - e.x) / d * sp * dt + e.knockX * dt).coerceIn(-WORLD_HALF, WORLD_HALF)
+                e.y = (e.y + (ty - e.y) / d * sp * dt + e.knockY * dt).coerceIn(-WORLD_HALF, WORLD_HALF)
+                e.knockX *= 0.85f
+                e.knockY *= 0.85f
             }
-            val d = dist(e.x, e.y, tx, ty).coerceAtLeast(1f)
-            val sp = e.effectiveSpeed
-            e.x = (e.x + (tx - e.x) / d * sp * dt + e.knockX * dt).coerceIn(-WORLD_HALF, WORLD_HALF)
-            e.y = (e.y + (ty - e.y) / d * sp * dt + e.knockY * dt).coerceIn(-WORLD_HALF, WORLD_HALF)
-            e.knockX *= 0.85f
-            e.knockY *= 0.85f
 
             if (e.hitFlash > 0f) e.hitFlash -= dt
             if (e.fireTick > 0f) e.fireTick -= dt
@@ -847,10 +1010,33 @@ class Game(
             pickups.add(Pickup(PickupType.HP, e.x, e.y - 30f, 40f))
             giveItem(ItemPool.roll(rng, minute, player.items, meta.disabledItems))
         }
-        if (e.type == EnemyType.BOSS) {
-            boss = null
-            spawnParticles(e.x, e.y, levelDef.bossColor, 40, 420f, 8f)
+        if (e.type == EnemyType.RIVAL) {
+            rival = null
+            spawnParticles(e.x, e.y, Color.rgb(229, 57, 53), 40, 420f, 8f)
+            repeat(8) {
+                pickups.add(
+                    Pickup(
+                        PickupType.GOLD,
+                        e.x + rng.nextFloat() * 140f - 70f,
+                        e.y + rng.nextFloat() * 140f - 70f,
+                        30f,
+                    ),
+                )
+            }
+            victoryReason = "Соперник повержен — арена ваша!"
             victory()
+        }
+        if (e.type == EnemyType.BOSS) {
+            spawnParticles(e.x, e.y, levelDef.bossColor, 40, 420f, 8f)
+            val remaining = enemies.firstOrNull { it !== e && it.type == EnemyType.BOSS && it.hp > 0f }
+            if (remaining != null) {
+                // Мод «Двойной босс»: победа только после обоих.
+                boss = remaining
+                addText(e.x, e.y - 100f, "Один готов — остался второй!", Color.rgb(255, 213, 79), 36f, 2f)
+            } else {
+                boss = null
+                victory()
+            }
         }
     }
 
@@ -860,17 +1046,23 @@ class Game(
             // После выхода босса волны редеют вдвое.
             val bossFactor = if (bossSpawned) 2f else 1f
             spawnTimer = ((1.1f - minute * 0.05f).coerceAtLeast(0.35f)) * bossFactor
-            val count = 2 + minute + levelDef.spawnBonus
+            var count = 2 + minute + levelDef.spawnBonus
+            if (hasMod(Mod.HORDE)) count = count * 3 / 2
+            if (hasMod(Mod.SWARM)) count *= 2
+            var hp = hpScale
+            if (hasMod(Mod.SWARM)) hp *= 0.6f
+            if (hasMod(Mod.TITANS)) hp *= 1.6f
+            val spd = speedScaleNow * (if (hasMod(Mod.SPEED_DEMON)) 1.3f else 1f)
             repeat(count) {
                 val type = rollEnemyType()
                 val (x, y) = spawnPoint()
-                enemies.add(Enemy(type, x, y, hpScale, dmgScaleNow, speedScaleNow))
+                enemies.add(Enemy(type, x, y, hp, dmgScaleNow, spd))
             }
         }
 
         eliteTimer -= dt
         if (eliteTimer <= 0f) {
-            eliteTimer = 60f
+            eliteTimer = if (hasMod(Mod.ELITE_MARCH)) 30f else 60f
             val (x, y) = spawnPoint()
             enemies.add(
                 Enemy(
@@ -886,7 +1078,7 @@ class Game(
         // Мини-босс каждые 3 минуты — жирная награда за убийство.
         miniBossTimer -= dt
         if (miniBossTimer <= 0f) {
-            miniBossTimer = 180f
+            miniBossTimer = if (hasMod(Mod.FRENZY)) 90f else 180f
             val (x, y) = spawnPoint()
             enemies.add(
                 Enemy(
@@ -1143,6 +1335,20 @@ class Game(
                             gold -= chestCost
                             chestsOpened++
                             obj.consumed = true
+                            // Мод «Проклятые сундуки»: халява зовёт волну.
+                            if (hasMod(Mod.CURSED_CHESTS)) {
+                                repeat(8) {
+                                    val a = rng.nextFloat() * Math.PI.toFloat() * 2f
+                                    enemies.add(
+                                        Enemy(
+                                            EnemyType.RUNNER,
+                                            obj.x + cos(a) * 500f, obj.y + sin(a) * 500f,
+                                            hpScale, dmgScaleNow, speedScaleNow,
+                                        ),
+                                    )
+                                }
+                                addText(obj.x, obj.y - 100f, "ПРОКЛЯТИЕ!", Color.rgb(103, 58, 183), 36f, 1.5f)
+                            }
                             giveItem(ItemPool.roll(rng, minute, player.items, meta.disabledItems))
                         } else if (chestHintTimer <= 0f) {
                             chestHintTimer = 1.5f

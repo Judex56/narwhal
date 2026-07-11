@@ -27,6 +27,10 @@ class MetaStore(context: Context) {
     val selectedTomes: MutableSet<String> =
         (prefs.getStringSet("sel_tomes", null) ?: emptySet()).toMutableSet()
 
+    /** Включённые моды забега. */
+    val selectedMods: MutableSet<String> =
+        (prefs.getStringSet("sel_mods", null) ?: emptySet()).toMutableSet()
+
     /** Все предметы открыты сразу — игрок управляет только пулом. */
     val discoveredItems: MutableSet<String> =
         ItemPool.catalog.map { it.id }.toMutableSet()
@@ -71,6 +75,7 @@ class MetaStore(context: Context) {
             .putStringSet("unlocked", unlockedWeapons)
             .putStringSet("sel_weapons", selectedWeapons)
             .putStringSet("sel_tomes", selectedTomes)
+            .putStringSet("sel_mods", selectedMods)
             .putStringSet("disabled", disabledItems)
             .putInt("best_time", bestTime)
             .putInt("unlocked_level", unlockedLevel)

@@ -19,6 +19,7 @@ class Renderer(private val game: Game) {
         typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
     private val path = Path()
+    private var nightPaint: Paint? = null
 
     fun draw(canvas: Canvas, joystick: Joystick) {
         if (game.state == GameState.MENU) {
@@ -62,6 +63,21 @@ class Renderer(private val game: Game) {
         if (g.nukeFlash > 0f) {
             fill.color = Color.argb((110 * g.nukeFlash / 0.5f).toInt(), 255, 120, 80)
             canvas.drawRect(0f, 0f, g.screenW, g.screenH, fill)
+        }
+
+        // Мод «Тьма»: видно только рядом с героем.
+        if (g.hasMod(Mod.NIGHT)) {
+            if (nightPaint == null) {
+                nightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = android.graphics.RadialGradient(
+                        g.screenW / 2f, g.screenH / 2f, g.screenH * 0.62f,
+                        intArrayOf(0x00000000, 0x00000000, 0xE6000000.toInt()),
+                        floatArrayOf(0f, 0.55f, 1f),
+                        android.graphics.Shader.TileMode.CLAMP,
+                    )
+                }
+            }
+            canvas.drawRect(0f, 0f, g.screenW, g.screenH, nightPaint!!)
         }
 
         drawHud(canvas)
@@ -126,6 +142,19 @@ class Renderer(private val game: Game) {
         stroke.color = Color.rgb(255, 112, 67)
         stroke.strokeWidth = 8f
         canvas.drawRect(-h, -h, h, h, stroke)
+
+        // Мод «Зона»: всё за пределами зоны заливается огнём.
+        if (game.hasMod(Mod.SHRINKING) && game.zoneHalf < WORLD_HALF - 1f) {
+            val z = game.zoneHalf
+            fill.color = 0x44FF3D00
+            canvas.drawRect(-h, -h, h, -z, fill)
+            canvas.drawRect(-h, z, h, h, fill)
+            canvas.drawRect(-h, -z, -z, z, fill)
+            canvas.drawRect(z, -z, h, z, fill)
+            stroke.color = Color.rgb(255, 87, 34)
+            stroke.strokeWidth = 10f
+            canvas.drawRect(-z, -z, z, z, stroke)
+        }
     }
 
     private fun drawWorldObjects(canvas: Canvas) {
@@ -393,6 +422,37 @@ class Renderer(private val game: Game) {
                     drawHorns(canvas, e.x, e.y, r, toPlayer, Color.rgb(255, 205, 210), 0.9f)
                     drawJaggedMouth(canvas, e.x, e.y + r * 0.35f, r * 0.9f, Color.BLACK)
                 }
+                EnemyType.RIVAL -> {
+                    // Тёмный герой-соперник: туника, плащ, шлем, красные глаза.
+                    val f = e.facing
+                    fill.color = Color.rgb(66, 66, 66)
+                    path.reset()
+                    path.moveTo(e.x - 5f * f, e.y - 8f)
+                    path.lineTo(e.x - 22f * f, e.y + 20f)
+                    path.lineTo(e.x - 2f * f, e.y + 16f)
+                    path.close()
+                    canvas.drawPath(path, fill)
+                    fill.color = Color.rgb(120, 30, 40)
+                    canvas.drawRoundRect(RectF(e.x - 14f, e.y - 8f, e.x + 14f, e.y + 18f), 8f, 8f, fill)
+                    fill.color = Color.rgb(255, 224, 189)
+                    canvas.drawCircle(e.x, e.y - 17f, 12f, fill)
+                    fill.color = Color.rgb(55, 71, 79)
+                    canvas.drawArc(RectF(e.x - 13f, e.y - 32f, e.x + 13f, e.y - 8f), 180f, 180f, true, fill)
+                    fill.color = Color.rgb(213, 0, 0)
+                    canvas.drawCircle(e.x + 4f * f, e.y - 15f, 2.6f, fill)
+                    canvas.drawCircle(e.x + 9f * f, e.y - 15f, 2.6f, fill)
+                    stroke.color = Color.rgb(207, 216, 220)
+                    stroke.strokeWidth = 4f
+                    canvas.drawLine(e.x + 14f * f, e.y + 2f, e.x + 30f * f, e.y - 12f, stroke)
+                    text.textAlign = Paint.Align.CENTER
+                    text.textSize = 20f
+                    text.color = Color.rgb(255, 82, 82)
+                    canvas.drawText("СОПЕРНИК", e.x, e.y - 44f, text)
+                    fill.color = Color.rgb(40, 40, 40)
+                    canvas.drawRect(e.x - 30f, e.y - 40f, e.x + 30f, e.y - 34f, fill)
+                    fill.color = Color.rgb(229, 57, 53)
+                    canvas.drawRect(e.x - 30f, e.y - 40f, e.x - 30f + 60f * (e.hp / e.maxHp), e.y - 34f, fill)
+                }
                 EnemyType.BOSS -> {
                     stroke.color = (game.levelDef.bossColor and 0x00FFFFFF) or 0x55000000
                     stroke.strokeWidth = 10f
@@ -415,6 +475,8 @@ class Renderer(private val game: Game) {
                     canvas.drawPath(path, fill)
                 }
             }
+
+            if (e.type == EnemyType.RIVAL) continue // у соперника своё лицо
 
             // Глаза: белки + зрачки, смотрящие на игрока.
             val ex = cos(toPlayer) * r * 0.35f
@@ -823,10 +885,10 @@ class Renderer(private val game: Game) {
             text.color = Color.WHITE
             text.textSize = 22f
             canvas.drawText(g.levelDef.bossName, g.screenW / 2f, top + 19f, text)
-        } else if (g.time < BOSS_TIME) {
+        } else if (g.time < g.bossAt) {
             text.color = Color.rgb(144, 164, 174)
             text.textSize = 22f
-            val left = (BOSS_TIME - g.time).toInt()
+            val left = (g.bossAt - g.time).toInt()
             canvas.drawText(
                 "Босс через ${left / 60}:${String.format("%02d", left % 60)}",
                 g.screenW / 2f, 128f, text,
@@ -922,10 +984,26 @@ class Renderer(private val game: Game) {
                 }
             }
         }
+        // Мод «Зона»: рамка живой зоны на миникарте.
+        if (game.hasMod(Mod.SHRINKING)) {
+            stroke.color = Color.rgb(255, 87, 34)
+            stroke.strokeWidth = 2f
+            canvas.drawRect(
+                mx(-game.zoneHalf), my(-game.zoneHalf),
+                mx(game.zoneHalf), my(game.zoneHalf), stroke,
+            )
+        }
         for (e in game.enemies) {
             if (e.type == EnemyType.ELITE) {
                 fill.color = Color.rgb(255, 82, 82)
                 canvas.drawCircle(mx(e.x), my(e.y), 4f, fill)
+            }
+            if (e.type == EnemyType.RIVAL) {
+                fill.color = Color.rgb(229, 57, 53)
+                canvas.drawCircle(mx(e.x), my(e.y), 6f, fill)
+                stroke.color = Color.WHITE
+                stroke.strokeWidth = 2f
+                canvas.drawCircle(mx(e.x), my(e.y), 6f, stroke)
             }
             if (e.type == EnemyType.MINIBOSS) {
                 fill.color = EnemyType.MINIBOSS.color
@@ -1096,6 +1174,26 @@ class Renderer(private val game: Game) {
             canvas.drawText(tome.label.removePrefix("Фолиант "), r.centerX(), r.bottom + 19f, text)
         }
 
+        // --- Моды ---
+        text.textAlign = Paint.Align.LEFT
+        text.textSize = 26f
+        text.color = Color.WHITE
+        canvas.drawText("МОДЫ (${g.meta.selectedMods.size})", menu.modCells[0].left, 158f, text)
+        for (i in menu.modCells.indices) {
+            val mod = menu.mods[i]
+            val r = menu.modCells[i]
+            val selected = menu.isModSelected(mod)
+            fill.color = (mod.color and 0x00FFFFFF) or (if (selected) 0x77000000 else 0x33000000)
+            canvas.drawRoundRect(r, 10f, 10f, fill)
+            stroke.strokeWidth = if (selected) 5f else 2.5f
+            stroke.color = if (selected) Color.WHITE else (mod.color and 0x00FFFFFF) or 0x99000000.toInt()
+            canvas.drawRoundRect(r, 10f, 10f, stroke)
+            text.textAlign = Paint.Align.CENTER
+            text.textSize = 22f
+            text.color = if (selected) Color.WHITE else 0xAAFFFFFF.toInt()
+            canvas.drawText(mod.code, r.centerX(), r.centerY() + 8f, text)
+        }
+
         // --- Уровни (этажи) ---
         text.textAlign = Paint.Align.CENTER
         text.textSize = 22f
@@ -1259,7 +1357,15 @@ class Renderer(private val game: Game) {
         text.textAlign = Paint.Align.CENTER
         text.color = Color.rgb(239, 83, 80)
         text.textSize = 72f
-        canvas.drawText("ВЫ ПОГИБЛИ", game.screenW / 2f, game.screenH / 2f - 120f, text)
+        canvas.drawText(
+            if (game.defeatReason.isNotEmpty()) "ПОРАЖЕНИЕ" else "ВЫ ПОГИБЛИ",
+            game.screenW / 2f, game.screenH / 2f - 120f, text,
+        )
+        if (game.defeatReason.isNotEmpty()) {
+            text.textSize = 30f
+            text.color = Color.rgb(255, 171, 145)
+            canvas.drawText(game.defeatReason, game.screenW / 2f, game.screenH / 2f - 80f, text)
+        }
         text.color = Color.WHITE
         text.textSize = 32f
         val m = (game.time / 60).toInt()
@@ -1286,7 +1392,7 @@ class Renderer(private val game: Game) {
         text.color = Color.WHITE
         text.textSize = 34f
         canvas.drawText(
-            "${game.levelDef.bossName} повержен!",
+            game.victoryReason.ifEmpty { "${game.levelDef.bossName} повержен!" },
             game.screenW / 2f, game.screenH / 2f - 60f, text,
         )
         text.textSize = 30f

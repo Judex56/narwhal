@@ -69,6 +69,8 @@ enum class EnemyType(
     ELITE(600f, 85f, 24f, 48f, 25f, 30, Color.rgb(255, 213, 79)),
     MINIBOSS(2600f, 82f, 30f, 64f, 60f, 0, Color.rgb(233, 30, 99)),
     BOSS(42000f, 72f, 40f, 96f, 100f, 300, Color.rgb(103, 58, 183)),
+    /** Герой-соперник (мод «Соперник»). */
+    RIVAL(900f, 245f, 22f, 26f, 150f, 200, Color.rgb(120, 30, 40)),
 }
 
 class Enemy(
@@ -89,6 +91,16 @@ class Enemy(
     // Атаки босса.
     var bossChargeTimer = 6f
     var bossShootTimer = 9f
+
+    // Мозги соперника (мод «Соперник»).
+    var rivalWayX = 0f
+    var rivalWayY = 0f
+    var rivalWayT = 0f
+    var rivalShootT = 2f
+    var rivalFarmT = 1f
+    var rivalBossT = 1f
+    var rivalKills = 0
+    var facing = 1f
 
     // Таймеры получения периодического урона от разных источников.
     var fireTick = 0f

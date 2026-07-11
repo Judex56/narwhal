@@ -14,7 +14,9 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
     val weaponTypes: List<WeaponType> = WeaponType.entries.toList()
     val allItems: List<ItemDef> = ItemPool.catalog
     val tomes: List<Tome> = Tome.entries.toList()
+    val mods: List<Mod> = Mod.entries.toList()
     val levelCells = ArrayList<RectF>()
+    val modCells = ArrayList<RectF>()
 
     val cell = 110f
     val gap = 12f
@@ -72,6 +74,18 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
             val x = tLeft + col * (cell + gap)
             val y = top + row * rowPitch
             tomeCells.add(RectF(x, y, x + cell, y + cell))
+        }
+
+        // Моды забега: компактная сетка 4xN правее фолиантов.
+        val modCell = 80f
+        val modGap = 12f
+        val mLeft = tLeft + 2 * (cell + gap) + 40f
+        for (i in mods.indices) {
+            val col = i % 4
+            val row = i / 4
+            val x = mLeft + col * (modCell + modGap)
+            val y = top + row * (modCell + modGap)
+            modCells.add(RectF(x, y, x + modCell, y + modCell))
         }
 
         // Селектор уровней (этажей) — ряд по центру над инфо-панелью.
@@ -167,7 +181,28 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
                 return false
             }
         }
+        for (i in modCells.indices) {
+            if (modCells[i].contains(x, y)) {
+                tapMod(mods[i])
+                return false
+            }
+        }
         return false
+    }
+
+    fun isModSelected(m: Mod) = meta.selectedMods.contains(m.name)
+
+    private fun tapMod(mod: Mod) {
+        if (isModSelected(mod)) {
+            meta.selectedMods.remove(mod.name)
+            infoTitle = "МОД ${mod.label} — выключен"
+        } else {
+            meta.selectedMods.add(mod.name)
+            infoTitle = "МОД ${mod.label} — включён"
+        }
+        meta.save()
+        infoColor = mod.color
+        infoDesc = mod.desc
     }
 
     private fun tapLevel(def: LevelDef) {
