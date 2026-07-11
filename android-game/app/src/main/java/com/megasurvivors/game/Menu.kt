@@ -103,8 +103,12 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
 
     private fun maxScroll(): Float = (itemContentHeight - itemArea.height()).coerceAtLeast(0f)
 
-    val selectedWeapon: WeaponType
-        get() = weaponTypes.firstOrNull { it.name == meta.selectedWeapon } ?: WeaponType.DART
+    /** Взятые в забег оружия (минимум одно). */
+    val selectedWeapons: List<WeaponType>
+        get() {
+            val list = weaponTypes.filter { meta.selectedWeapons.contains(it.name) }
+            return list.ifEmpty { listOf(WeaponType.DART) }
+        }
 
     fun isTomeSelected(t: Tome) = meta.selectedTomes.contains(t.name)
 
@@ -167,38 +171,45 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
     }
 
     private fun tapLevel(def: LevelDef) {
-        if (def.index <= meta.unlockedLevel) {
-            meta.selectedLevel = def.index
-            meta.save()
-            infoTitle = "Уровень ${def.index}: ${def.name}"
-            infoColor = def.bossColor
-            infoDesc = "HP врагов ×${"%.1f".format(def.hpMult)}, урон ×${"%.1f".format(def.dmgMult)}" +
-                " • Босс на 15:00 — ${def.bossName} • Убейте босса, чтобы открыть следующий уровень"
-        } else {
-            infoTitle = "Уровень ${def.index}: ${def.name} — закрыт"
-            infoColor = Color.rgb(120, 144, 156)
-            infoDesc = "Убейте босса уровня ${def.index - 1}, чтобы открыть"
-        }
+        // Все уровни открыты сразу — это выбор сложности.
+        meta.selectedLevel = def.index
+        meta.save()
+        infoTitle = "Уровень ${def.index}: ${def.name}"
+        infoColor = def.bossColor
+        val finalNote = if (def.bossHpMult > 1f) " (ФИНАЛЬНЫЙ: HP босса ×${def.bossHpMult.toInt()})" else ""
+        infoDesc = "HP врагов ×${"%.1f".format(def.hpMult)}, урон ×${"%.1f".format(def.dmgMult)}" +
+            " • Мини-босс каждые 3 мин • Босс на 15:00 — ${def.bossName}$finalNote"
     }
 
     private fun tapWeapon(type: WeaponType) {
+        val descLine = "${type.desc} • ${WeaponBalance.levelUpText(type, 1)}"
         if (meta.isUnlocked(type)) {
-            meta.selectedWeapon = type.name
+            // Мультивыбор: тап добавляет/убирает оружие из набора.
+            if (meta.selectedWeapons.contains(type.name)) {
+                if (meta.selectedWeapons.size > 1) {
+                    meta.selectedWeapons.remove(type.name)
+                    infoTitle = "${type.label} — убран из набора (${meta.selectedWeapons.size} в забег)"
+                } else {
+                    infoTitle = "${type.label} — нельзя убрать последнее оружие"
+                }
+            } else {
+                meta.selectedWeapons.add(type.name)
+                infoTitle = "${type.label} — взят в забег (${meta.selectedWeapons.size} всего)"
+            }
             meta.save()
-            infoTitle = type.label
             infoColor = type.color
-            infoDesc = "${type.desc} • ${WeaponBalance.levelUpText(type, 1)}"
+            infoDesc = descLine
         } else if (meta.gold >= type.price) {
             meta.tryUnlock(type)
-            meta.selectedWeapon = type.name
+            meta.selectedWeapons.add(type.name)
             meta.save()
-            infoTitle = "${type.label} — ОТКРЫТО за ${type.price} золота!"
+            infoTitle = "${type.label} — ОТКРЫТО за ${type.price} золота и взято в забег!"
             infoColor = type.color
-            infoDesc = "${type.desc} • ${WeaponBalance.levelUpText(type, 1)}"
+            infoDesc = descLine
         } else {
             infoTitle = "${type.label} — нужно ${type.price} золота (у вас ${meta.gold})"
             infoColor = Color.rgb(255, 138, 101)
-            infoDesc = "${type.desc} • ${WeaponBalance.levelUpText(type, 1)}"
+            infoDesc = descLine
         }
     }
 
@@ -218,20 +229,16 @@ class Menu(private val screenW: Float, private val screenH: Float, val meta: Met
     }
 
     private fun tapTome(tome: Tome) {
+        // Как предметы: сколько угодно, действуют весь забег.
         if (isTomeSelected(tome)) {
             meta.selectedTomes.remove(tome.name)
             infoTitle = "${tome.label} — убран"
-        } else if (meta.selectedTomes.size < MAX_TOMES) {
-            meta.selectedTomes.add(tome.name)
-            infoTitle = "${tome.label} — взят (стартует на 1 ур.)"
         } else {
-            infoTitle = "Можно взять не больше $MAX_TOMES фолиантов"
-            infoColor = Color.rgb(255, 138, 101)
-            infoDesc = ""
-            return
+            meta.selectedTomes.add(tome.name)
+            infoTitle = "${tome.label} — взят в забег"
         }
         meta.save()
         infoColor = tome.color
-        infoDesc = "${tome.perLevelText} • Качается на левел-апах до $MAX_TOME_LEVEL ур."
+        infoDesc = "${tome.desc} • Действует весь забег"
     }
 }

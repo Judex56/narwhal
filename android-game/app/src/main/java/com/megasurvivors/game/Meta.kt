@@ -20,13 +20,16 @@ class MetaStore(context: Context) {
                 ?: setOf("DART", "ORBIT", "AURA", "LIGHTNING")
             ).toMutableSet()
 
-    var selectedWeapon: String = prefs.getString("sel_weapon", "DART") ?: "DART"
+    /** Выбранные в забег оружия: от одного до всех сразу. */
+    val selectedWeapons: MutableSet<String> =
+        (prefs.getStringSet("sel_weapons", null) ?: setOf("DART")).toMutableSet()
+
     val selectedTomes: MutableSet<String> =
         (prefs.getStringSet("sel_tomes", null) ?: emptySet()).toMutableSet()
 
-    /** Найденные предметы (коллекция; открываются, когда выпадут в забеге). */
+    /** Все предметы открыты сразу — игрок управляет только пулом. */
     val discoveredItems: MutableSet<String> =
-        (prefs.getStringSet("discovered", null) ?: ItemPool.defaultDiscovered).toMutableSet()
+        ItemPool.catalog.map { it.id }.toMutableSet()
 
     /**
      * Выключенные из пула выпадения предметы. Выключать можно только
@@ -66,9 +69,8 @@ class MetaStore(context: Context) {
         prefs.edit()
             .putInt("gold", gold)
             .putStringSet("unlocked", unlockedWeapons)
-            .putString("sel_weapon", selectedWeapon)
+            .putStringSet("sel_weapons", selectedWeapons)
             .putStringSet("sel_tomes", selectedTomes)
-            .putStringSet("discovered", discoveredItems)
             .putStringSet("disabled", disabledItems)
             .putInt("best_time", bestTime)
             .putInt("unlocked_level", unlockedLevel)

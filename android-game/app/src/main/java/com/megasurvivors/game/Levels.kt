@@ -24,6 +24,8 @@ class LevelDef(
     val dmgMult: Float,
     /** Дополнительные враги в каждой волне. */
     val spawnBonus: Int,
+    /** Доп. множитель здоровья босса (финальный босс ×5). */
+    val bossHpMult: Float = 1f,
 )
 
 val LEVELS: List<LevelDef> = listOf(
@@ -66,5 +68,6 @@ val LEVELS: List<LevelDef> = listOf(
         8, "Бездна", "Пожиратель миров",
         Color.rgb(18, 16, 28), Color.rgb(26, 24, 38), Color.rgb(36, 32, 50),
         Color.rgb(171, 71, 188), 7.5f, 3.5f, 8,
+        bossHpMult = 5f,
     ),
 )

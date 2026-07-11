@@ -162,11 +162,6 @@ object ItemPool {
 
     fun byId(id: String): ItemDef? = catalog.firstOrNull { it.id == id }
 
-    /** Что открыто с самого начала: все обычные + база редких + 3 катализатора. */
-    val defaultDiscovered: Set<String> =
-        catalog.filter { it.tier == Tier.COMMON }.map { it.id }.toSet() +
-            setOf("fang", "clover", "goblet", "frost_cube", "plague_heart", "dark_sickle")
-
     /**
      * Выпадение предмета из сундука. Катализаторы не дублируются,
      * выключенные игроком предметы не выпадают (ненайденные — всегда

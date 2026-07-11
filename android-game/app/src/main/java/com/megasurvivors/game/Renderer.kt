@@ -310,42 +310,98 @@ class Renderer(private val game: Game) {
                 e.slowTimer > 0f -> blend(e.type.color, Color.rgb(128, 222, 234), 0.35f)
                 else -> e.type.color
             }
+            val darker = blend(color, Color.BLACK, 0.35f)
+            val toPlayer = kotlin.math.atan2(game.player.y - e.y, game.player.x - e.x)
             fill.color = color
 
-            val toPlayer = kotlin.math.atan2(game.player.y - e.y, game.player.x - e.x)
             when (e.type) {
-                EnemyType.WALKER -> canvas.drawCircle(e.x, e.y, r, fill)
+                EnemyType.WALKER -> {
+                    // Зомби-блоб: тело-капля с обвисшими ушами.
+                    canvas.drawCircle(e.x, e.y, r, fill)
+                    fill.color = darker
+                    canvas.drawOval(RectF(e.x - r * 1.15f, e.y - r * 0.4f, e.x - r * 0.6f, e.y + r * 0.35f), fill)
+                    canvas.drawOval(RectF(e.x + r * 0.6f, e.y - r * 0.4f, e.x + r * 1.15f, e.y + r * 0.35f), fill)
+                    drawJaggedMouth(canvas, e.x, e.y + r * 0.4f, r * 0.8f, darker)
+                }
                 EnemyType.RUNNER -> {
-                    // Треугольник, смотрящий на игрока.
+                    // Имп: треугольное тело, рожки и хвост.
                     path.reset()
                     for (k in 0..2) {
                         val a = toPlayer + k * (Math.PI.toFloat() * 2f / 3f)
-                        val rr = if (k == 0) r * 1.3f else r
+                        val rr = if (k == 0) r * 1.35f else r
                         val px = e.x + cos(a) * rr
                         val py = e.y + sin(a) * rr
                         if (k == 0) path.moveTo(px, py) else path.lineTo(px, py)
                     }
                     path.close()
                     canvas.drawPath(path, fill)
+                    // Хвост назад от игрока.
+                    stroke.color = darker
+                    stroke.strokeWidth = 4f
+                    val tailA = toPlayer + Math.PI.toFloat()
+                    val wig = sin(game.time * 10f + e.animPhase) * 8f
+                    canvas.drawLine(
+                        e.x + cos(tailA) * r, e.y + sin(tailA) * r,
+                        e.x + cos(tailA) * r * 2f + wig, e.y + sin(tailA) * r * 2f + wig,
+                        stroke,
+                    )
+                    drawHorns(canvas, e.x, e.y, r, toPlayer, darker, 0.5f)
                 }
-                EnemyType.BRUTE -> canvas.drawRoundRect(
-                    RectF(e.x - r, e.y - r, e.x + r, e.y + r), r * 0.3f, r * 0.3f, fill,
-                )
-                EnemyType.TANK -> drawPolygon(canvas, e.x, e.y, r * 1.1f, 6, game.time * 0.4f)
+                EnemyType.BRUTE -> {
+                    // Огр: квадратное тело, брови и клыки.
+                    canvas.drawRoundRect(RectF(e.x - r, e.y - r, e.x + r, e.y + r), r * 0.3f, r * 0.3f, fill)
+                    fill.color = darker
+                    canvas.drawRect(e.x - r * 0.7f, e.y - r * 0.55f, e.x + r * 0.7f, e.y - r * 0.3f, fill)
+                    fill.color = Color.WHITE
+                    path.reset()
+                    path.moveTo(e.x - r * 0.45f, e.y + r * 0.55f)
+                    path.lineTo(e.x - r * 0.25f, e.y + r * 0.15f)
+                    path.lineTo(e.x - r * 0.05f, e.y + r * 0.55f)
+                    path.close()
+                    canvas.drawPath(path, fill)
+                    path.reset()
+                    path.moveTo(e.x + r * 0.05f, e.y + r * 0.55f)
+                    path.lineTo(e.x + r * 0.25f, e.y + r * 0.15f)
+                    path.lineTo(e.x + r * 0.45f, e.y + r * 0.55f)
+                    path.close()
+                    canvas.drawPath(path, fill)
+                }
+                EnemyType.TANK -> {
+                    // Голем: шестиугольный панцирь с плитами.
+                    drawPolygon(canvas, e.x, e.y, r * 1.1f, 6, game.time * 0.4f)
+                    fill.color = darker
+                    drawPolygonFill(canvas, e.x, e.y, r * 0.65f, 6, game.time * 0.4f)
+                    fill.color = color
+                    canvas.drawCircle(e.x, e.y, r * 0.3f, fill)
+                }
                 EnemyType.ELITE -> {
+                    // Демон: пентаграмма с рогами и золотым кольцом.
                     drawPolygon(canvas, e.x, e.y, r * 1.15f, 5, game.time * 1.2f)
+                    drawHorns(canvas, e.x, e.y, r, toPlayer, Color.rgb(255, 241, 118), 0.7f)
                     stroke.color = Color.rgb(255, 241, 118)
                     stroke.strokeWidth = 4f
-                    canvas.drawCircle(e.x, e.y, r * 1.25f, stroke)
+                    canvas.drawCircle(e.x, e.y, r * 1.3f, stroke)
+                }
+                EnemyType.MINIBOSS -> {
+                    // Мини-босс: крупный рогатый демон с алым кольцом.
+                    stroke.color = (EnemyType.MINIBOSS.color and 0x00FFFFFF) or 0x66000000.toInt()
+                    stroke.strokeWidth = 7f
+                    canvas.drawCircle(e.x, e.y, r * 1.35f + 5f * sin(game.time * 4f), stroke)
+                    drawPolygon(canvas, e.x, e.y, r * 1.15f, 7, game.time * 0.9f)
+                    fill.color = darker
+                    canvas.drawCircle(e.x, e.y, r * 0.6f, fill)
+                    drawHorns(canvas, e.x, e.y, r, toPlayer, Color.rgb(255, 205, 210), 0.9f)
+                    drawJaggedMouth(canvas, e.x, e.y + r * 0.35f, r * 0.9f, Color.BLACK)
                 }
                 EnemyType.BOSS -> {
-                    // Пульсирующее кольцо + шипастое тело + корона.
                     stroke.color = (game.levelDef.bossColor and 0x00FFFFFF) or 0x55000000
                     stroke.strokeWidth = 10f
                     canvas.drawCircle(e.x, e.y, r * 1.3f + 8f * sin(game.time * 3f), stroke)
                     drawPolygon(canvas, e.x, e.y, r * 1.15f, 8, game.time * 0.8f)
                     fill.color = if (e.hitFlash > 0f) Color.WHITE else game.levelDef.bossColor
                     canvas.drawCircle(e.x, e.y, r * 0.85f, fill)
+                    drawHorns(canvas, e.x, e.y, r * 0.9f, toPlayer, blend(game.levelDef.bossColor, Color.BLACK, 0.4f), 1.2f)
+                    drawJaggedMouth(canvas, e.x, e.y + r * 0.3f, r, Color.BLACK)
                     fill.color = Color.rgb(255, 213, 79)
                     path.reset()
                     path.moveTo(e.x - 34f, e.y - r * 0.9f)
@@ -360,14 +416,21 @@ class Renderer(private val game: Game) {
                 }
             }
 
-            // Глаза.
-            val ex = cos(toPlayer) * r * 0.4f
-            val ey = sin(toPlayer) * r * 0.4f
-            fill.color = Color.BLACK
-            canvas.drawCircle(e.x + ex - r * 0.22f, e.y + ey, r * 0.14f, fill)
-            canvas.drawCircle(e.x + ex + r * 0.22f, e.y + ey, r * 0.14f, fill)
+            // Глаза: белки + зрачки, смотрящие на игрока.
+            val ex = cos(toPlayer) * r * 0.35f
+            val ey = sin(toPlayer) * r * 0.35f
+            fill.color = Color.WHITE
+            canvas.drawCircle(e.x + ex - r * 0.24f, e.y + ey - r * 0.05f, r * 0.18f, fill)
+            canvas.drawCircle(e.x + ex + r * 0.24f, e.y + ey - r * 0.05f, r * 0.18f, fill)
+            fill.color = if (e.type == EnemyType.MINIBOSS || e.type == EnemyType.BOSS) {
+                Color.rgb(213, 0, 0)
+            } else {
+                Color.BLACK
+            }
+            canvas.drawCircle(e.x + ex - r * 0.24f + cos(toPlayer) * 3f, e.y + ey - r * 0.05f + sin(toPlayer) * 3f, r * 0.09f, fill)
+            canvas.drawCircle(e.x + ex + r * 0.24f + cos(toPlayer) * 3f, e.y + ey - r * 0.05f + sin(toPlayer) * 3f, r * 0.09f, fill)
 
-            if (e.type != EnemyType.BOSS && (e.type == EnemyType.ELITE || e.hp < e.maxHp)) {
+            if (e.type != EnemyType.BOSS && (e.type == EnemyType.ELITE || e.type == EnemyType.MINIBOSS || e.hp < e.maxHp)) {
                 val w = e.type.radius * 2f
                 val top = e.y - e.type.radius - 14f
                 fill.color = Color.rgb(40, 40, 40)
@@ -376,6 +439,45 @@ class Renderer(private val game: Game) {
                 canvas.drawRect(e.x - w / 2, top, e.x - w / 2 + w * (e.hp / e.maxHp), top + 6f, fill)
             }
         }
+    }
+
+    /** Пара рогов, ориентированных «вверх» относительно взгляда на игрока. */
+    private fun drawHorns(canvas: Canvas, cx: Float, cy: Float, r: Float, toPlayer: Float, color: Int, size: Float) {
+        fill.color = color
+        for (side in intArrayOf(-1, 1)) {
+            val a = toPlayer + side * 2.2f
+            val bx = cx + cos(a) * r * 0.85f
+            val by = cy + sin(a) * r * 0.85f
+            val tipX = cx + cos(a) * r * (1.5f + 0.3f * size)
+            val tipY = cy + sin(a) * r * (1.5f + 0.3f * size)
+            path.reset()
+            path.moveTo(bx + cos(a + 1.57f) * 7f * size, by + sin(a + 1.57f) * 7f * size)
+            path.lineTo(tipX, tipY)
+            path.lineTo(bx - cos(a + 1.57f) * 7f * size, by - sin(a + 1.57f) * 7f * size)
+            path.close()
+            canvas.drawPath(path, fill)
+        }
+    }
+
+    /** Зубастый рот-зигзаг. */
+    private fun drawJaggedMouth(canvas: Canvas, cx: Float, cy: Float, width: Float, color: Int) {
+        stroke.color = color
+        stroke.strokeWidth = 3.5f
+        val teeth = 4
+        val step = width / teeth
+        var x = cx - width / 2f
+        path.reset()
+        path.moveTo(x, cy)
+        for (k in 0 until teeth) {
+            path.lineTo(x + step / 2f, cy + 6f)
+            path.lineTo(x + step, cy)
+            x += step
+        }
+        canvas.drawPath(path, stroke)
+    }
+
+    private fun drawPolygonFill(canvas: Canvas, cx: Float, cy: Float, r: Float, sides: Int, rot: Float) {
+        drawPolygon(canvas, cx, cy, r, sides, rot)
     }
 
     private fun drawPolygon(canvas: Canvas, cx: Float, cy: Float, r: Float, sides: Int, rot: Float) {
@@ -401,24 +503,60 @@ class Renderer(private val game: Game) {
         val p = game.player
         if (p.iFrames > 0f && (p.iFrames * 20).toInt() % 2 == 0) return
 
-        // Ноги-кружки шагают, когда игрок движется.
-        if (game.moveMag > 0.05f) {
-            val step = sin(game.time * 14f) * 10f * game.moveMag
-            fill.color = Color.rgb(144, 164, 174)
-            canvas.drawCircle(p.x - 10f, p.y + p.radius * 0.8f + step * 0.4f, 7f, fill)
-            canvas.drawCircle(p.x + 10f, p.y + p.radius * 0.8f - step * 0.4f, 7f, fill)
-        }
-
-        val bob = if (game.moveMag > 0.05f) sin(game.time * 14f) * 2.5f else sin(game.time * 3f) * 1.5f
+        val moving = game.moveMag > 0.05f
+        val bob = if (moving) sin(game.time * 14f) * 2.5f else sin(game.time * 3f) * 1.2f
         val py = p.y + bob
-        fill.color = Color.rgb(236, 239, 241)
-        canvas.drawCircle(p.x, py, p.radius, fill)
-        fill.color = Color.rgb(38, 50, 56)
-        canvas.drawCircle(p.x + 8f * p.facing, py - 6f, 4.5f, fill)
-        canvas.drawCircle(p.x + 16f * p.facing, py - 6f, 4.5f, fill)
-        stroke.color = Color.rgb(96, 125, 139)
+        val f = p.facing
+
+        // Ноги шагают при движении.
+        val step = if (moving) sin(game.time * 14f) * 9f * game.moveMag else 0f
+        fill.color = Color.rgb(69, 90, 100)
+        canvas.drawOval(RectF(p.x - 14f + step * 0.3f, p.y + 16f, p.x - 2f + step * 0.3f, p.y + 30f + step * 0.4f), fill)
+        canvas.drawOval(RectF(p.x + 2f - step * 0.3f, p.y + 16f, p.x + 14f - step * 0.3f, p.y + 30f - step * 0.4f), fill)
+
+        // Плащ развевается позади героя.
+        val wave = sin(game.time * 8f) * 5f + game.moveMag * 8f
+        fill.color = Color.rgb(123, 31, 62)
+        path.reset()
+        path.moveTo(p.x - 6f * f, py - 10f)
+        path.lineTo(p.x - (20f + wave) * f, py + 22f)
+        path.lineTo(p.x - 2f * f, py + 18f)
+        path.close()
+        canvas.drawPath(path, fill)
+
+        // Туловище — синяя туника с поясом.
+        fill.color = Color.rgb(40, 83, 145)
+        canvas.drawRoundRect(RectF(p.x - 15f, py - 8f, p.x + 15f, py + 20f), 9f, 9f, fill)
+        fill.color = Color.rgb(93, 64, 55)
+        canvas.drawRect(p.x - 15f, py + 8f, p.x + 15f, py + 13f, fill)
+        fill.color = Color.rgb(255, 213, 79)
+        canvas.drawRect(p.x - 3f, py + 7f, p.x + 3f, py + 14f, fill)
+
+        // Меч в руке (по направлению взгляда), покачивается.
+        val swing = sin(game.time * 6f) * 6f
+        stroke.color = Color.rgb(207, 216, 220)
+        stroke.strokeWidth = 5f
+        canvas.drawLine(
+            p.x + 15f * f, py + 2f,
+            p.x + (34f * f), py - 16f - swing,
+            stroke,
+        )
+        stroke.color = Color.rgb(93, 64, 55)
         stroke.strokeWidth = 4f
-        canvas.drawCircle(p.x, py, p.radius, stroke)
+        canvas.drawLine(p.x + 12f * f, py + 6f, p.x + 19f * f, py - 2f, stroke)
+
+        // Голова со шлемом и плюмажем.
+        fill.color = Color.rgb(255, 224, 189)
+        canvas.drawCircle(p.x, py - 18f, 13f, fill)
+        fill.color = Color.rgb(158, 158, 158)
+        canvas.drawArc(RectF(p.x - 14f, py - 34f, p.x + 14f, py - 8f), 180f, 180f, true, fill)
+        canvas.drawRect(p.x - 14f, py - 21f, p.x + 14f, py - 17f, fill)
+        fill.color = Color.rgb(229, 57, 53)
+        canvas.drawOval(RectF(p.x - 4f, py - 40f, p.x + 4f, py - 28f), fill)
+        // Глаза по направлению движения.
+        fill.color = Color.rgb(38, 50, 56)
+        canvas.drawCircle(p.x + 4f * f, py - 16f, 2.6f, fill)
+        canvas.drawCircle(p.x + 9f * f, py - 16f, 2.6f, fill)
     }
 
     private fun drawSpinEffect(canvas: Canvas) {
@@ -483,7 +621,67 @@ class Renderer(private val game: Game) {
     private fun drawProjectiles(canvas: Canvas) {
         for (p in game.projectiles) {
             fill.color = p.color
+            val deg = kotlin.math.atan2(p.vy, p.vx) * 180f / Math.PI.toFloat()
             when (p.kind) {
+                ProjKind.DART -> {
+                    // Дротик: древко + стальной наконечник + оперение.
+                    canvas.save()
+                    canvas.rotate(deg, p.x, p.y)
+                    stroke.color = p.color
+                    stroke.strokeWidth = 4f
+                    canvas.drawLine(p.x - 14f, p.y, p.x + 8f, p.y, stroke)
+                    fill.color = Color.rgb(236, 239, 241)
+                    path.reset()
+                    path.moveTo(p.x + 18f, p.y)
+                    path.lineTo(p.x + 6f, p.y - 5f)
+                    path.lineTo(p.x + 6f, p.y + 5f)
+                    path.close()
+                    canvas.drawPath(path, fill)
+                    fill.color = p.color
+                    path.reset()
+                    path.moveTo(p.x - 14f, p.y - 6f)
+                    path.lineTo(p.x - 8f, p.y)
+                    path.lineTo(p.x - 14f, p.y + 6f)
+                    path.close()
+                    canvas.drawPath(path, fill)
+                    canvas.restore()
+                }
+                ProjKind.POISON -> {
+                    // Отравленный нож: зелёное лезвие + рукоять, капает яд.
+                    canvas.save()
+                    canvas.rotate(deg, p.x, p.y)
+                    fill.color = p.color
+                    path.reset()
+                    path.moveTo(p.x + 16f, p.y)
+                    path.lineTo(p.x + 2f, p.y - 6f)
+                    path.lineTo(p.x + 2f, p.y + 6f)
+                    path.close()
+                    canvas.drawPath(path, fill)
+                    fill.color = Color.rgb(93, 64, 55)
+                    canvas.drawRoundRect(RectF(p.x - 12f, p.y - 3f, p.x + 3f, p.y + 3f), 3f, 3f, fill)
+                    canvas.restore()
+                    fill.color = (p.color and 0x00FFFFFF) or 0x66000000.toInt()
+                    canvas.drawCircle(p.x - p.vx * 0.02f, p.y - p.vy * 0.02f, 4f, fill)
+                }
+                ProjKind.PELLET -> {
+                    // Дробь с огненным следом.
+                    fill.color = (p.color and 0x00FFFFFF) or 0x55000000
+                    canvas.drawCircle(p.x - p.vx * 0.015f, p.y - p.vy * 0.015f, p.radius * 0.8f, fill)
+                    fill.color = p.color
+                    canvas.drawCircle(p.x, p.y, p.radius, fill)
+                }
+                ProjKind.SLASH -> {
+                    // Крутящийся полумесяц-лезвие.
+                    canvas.save()
+                    canvas.rotate(deg + p.age * 540f, p.x, p.y)
+                    stroke.color = p.color
+                    stroke.strokeWidth = 8f
+                    canvas.drawArc(RectF(p.x - 18f, p.y - 18f, p.x + 18f, p.y + 18f), -60f, 140f, false, stroke)
+                    stroke.color = Color.WHITE
+                    stroke.strokeWidth = 3f
+                    canvas.drawArc(RectF(p.x - 13f, p.y - 13f, p.x + 13f, p.y + 13f), -50f, 110f, false, stroke)
+                    canvas.restore()
+                }
                 ProjKind.BANANA -> {
                     canvas.save()
                     canvas.rotate(p.age * 720f, p.x, p.y)
@@ -491,15 +689,11 @@ class Renderer(private val game: Game) {
                     stroke.color = p.color
                     stroke.strokeWidth = 9f
                     canvas.drawArc(r, 20f, 200f, false, stroke)
+                    stroke.color = Color.rgb(121, 85, 72)
+                    stroke.strokeWidth = 5f
+                    canvas.drawArc(r, 15f, 14f, false, stroke)
                     canvas.restore()
                 }
-                ProjKind.SLASH -> {
-                    canvas.save()
-                    canvas.rotate(p.age * 540f, p.x, p.y)
-                    canvas.drawRoundRect(RectF(p.x - 20f, p.y - 6f, p.x + 20f, p.y + 6f), 5f, 5f, fill)
-                    canvas.restore()
-                }
-                else -> canvas.drawCircle(p.x, p.y, p.radius, fill)
             }
         }
     }
@@ -733,6 +927,10 @@ class Renderer(private val game: Game) {
                 fill.color = Color.rgb(255, 82, 82)
                 canvas.drawCircle(mx(e.x), my(e.y), 4f, fill)
             }
+            if (e.type == EnemyType.MINIBOSS) {
+                fill.color = EnemyType.MINIBOSS.color
+                canvas.drawCircle(mx(e.x), my(e.y), 6f, fill)
+            }
             if (e.type == EnemyType.BOSS) {
                 fill.color = game.levelDef.bossColor
                 canvas.drawCircle(mx(e.x), my(e.y), 7f, fill)
@@ -776,11 +974,11 @@ class Renderer(private val game: Game) {
         text.textAlign = Paint.Align.LEFT
         text.textSize = 26f
         text.color = Color.WHITE
-        canvas.drawText("ОРУЖИЕ", menu.weaponCells[0].left, 158f, text)
-        val discovered = menu.allItems.count { g.meta.isDiscovered(it.id) }
-        canvas.drawText("ПРЕДМЕТЫ ($discovered/${menu.allItems.size})", menu.itemArea.left, 158f, text)
+        canvas.drawText("ОРУЖИЕ (взято: ${g.meta.selectedWeapons.size})", menu.weaponCells[0].left, 158f, text)
+        val enabledItems = menu.allItems.count { g.meta.isEnabled(it.id) }
+        canvas.drawText("ПРЕДМЕТЫ (в пуле: $enabledItems/${menu.allItems.size})", menu.itemArea.left, 158f, text)
         canvas.drawText(
-            "ФОЛИАНТЫ (${g.meta.selectedTomes.size}/$MAX_TOMES)",
+            "ФОЛИАНТЫ (взято: ${g.meta.selectedTomes.size})",
             menu.tomeCells[0].left, 158f, text,
         )
 
@@ -789,7 +987,7 @@ class Renderer(private val game: Game) {
             val type = menu.weaponTypes[i]
             val r = menu.weaponCells[i]
             val unlocked = g.meta.isUnlocked(type)
-            val selected = g.meta.selectedWeapon == type.name
+            val selected = g.meta.selectedWeapons.contains(type.name)
 
             fill.color = if (unlocked) {
                 (type.color and 0x00FFFFFF) or 0x55000000
@@ -909,20 +1107,15 @@ class Renderer(private val game: Game) {
         for (i in menu.levelCells.indices) {
             val def = LEVELS[i]
             val r = menu.levelCells[i]
-            val unlocked = def.index <= g.meta.unlockedLevel
             val selected = g.meta.selectedLevel == def.index
-            fill.color = if (unlocked) (def.bossColor and 0x00FFFFFF) or 0x55000000 else 0x33000000
+            fill.color = (def.bossColor and 0x00FFFFFF) or 0x55000000
             canvas.drawRoundRect(r, 10f, 10f, fill)
             stroke.strokeWidth = if (selected) 5f else 3f
-            stroke.color = when {
-                selected -> Color.WHITE
-                unlocked -> def.bossColor
-                else -> 0x44FFFFFF
-            }
+            stroke.color = if (selected) Color.WHITE else def.bossColor
             canvas.drawRoundRect(r, 10f, 10f, stroke)
             text.textSize = 26f
-            text.color = if (unlocked) Color.WHITE else 0x66FFFFFF
-            canvas.drawText(if (unlocked) "${def.index}" else "🔒", r.centerX(), r.centerY() + 9f, text)
+            text.color = Color.WHITE
+            canvas.drawText("${def.index}", r.centerX(), r.centerY() + 9f, text)
         }
 
         // --- Инфо-панель ---

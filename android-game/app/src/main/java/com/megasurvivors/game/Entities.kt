@@ -18,15 +18,17 @@ class Player {
     /** Собранные предметы (Megabonk-стиль: копятся списком). */
     val items = ArrayList<ItemDef>()
     val buffs = ArrayList<Buff>()
-    /** Уровни фолиантов (качаются на левел-апах вместе с оружием). */
-    val tomes = HashMap<Tome, Int>()
+    /** Взятые в забег фолианты — плоские пассивки на весь забег. */
+    val tomes = HashSet<Tome>()
+    /** Мелкие постоянные бонусы с запасных карточек левел-апа. */
+    val forged = HashMap<Stat, Float>()
 
     private val baseSpeed = 230f
     private val baseMaxHp = 100f
 
     fun bonus(stat: Stat): Float {
-        var sum = 0f
-        for ((tome, lvl) in tomes) sum += (tome.stats[stat] ?: 0f) * lvl
+        var sum = forged[stat] ?: 0f
+        for (tome in tomes) sum += tome.stats[stat] ?: 0f
         for (item in items) sum += item.stats[stat] ?: 0f
         for (buff in buffs) sum += buff.stats[stat] ?: 0f
         return sum
@@ -65,6 +67,7 @@ enum class EnemyType(
     TANK(90f, 60f, 16f, 34f, 4f, 3, Color.rgb(84, 110, 122)),
     BRUTE(45f, 110f, 12f, 27f, 2.5f, 2, Color.rgb(124, 179, 66)),
     ELITE(600f, 85f, 24f, 48f, 25f, 30, Color.rgb(255, 213, 79)),
+    MINIBOSS(2600f, 82f, 30f, 64f, 60f, 0, Color.rgb(233, 30, 99)),
     BOSS(42000f, 72f, 40f, 96f, 100f, 300, Color.rgb(103, 58, 183)),
 }
 

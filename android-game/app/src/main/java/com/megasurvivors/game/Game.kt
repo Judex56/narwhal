@@ -64,6 +64,7 @@ class Game(
 
     private var spawnTimer = 0f
     private var eliteTimer = 45f
+    private var miniBossTimer = 180f
     private var shrineWaveTimer = 0f
     private var regenTimer = 0f
     private var chestHintTimer = 0f
@@ -96,7 +97,7 @@ class Game(
     // Запуск и завершение забега.
     // ------------------------------------------------------------------
     fun startRun() {
-        gameLevel = meta.selectedLevel.coerceIn(1, meta.unlockedLevel).coerceAtMost(LEVELS.size)
+        gameLevel = meta.selectedLevel.coerceIn(1, LEVELS.size)
         levelDef = LEVELS[gameLevel - 1]
 
         enemies.clear()
@@ -121,11 +122,15 @@ class Game(
             items.clear()
             buffs.clear()
             tomes.clear()
+            forged.clear()
         }
-        player.weapons.add(WeaponInstance(menu.selectedWeapon))
+        // Весь выбранный в меню набор оружия — с 1 уровня каждое.
+        for (type in menu.selectedWeapons) {
+            player.weapons.add(WeaponInstance(type))
+        }
         for (name in meta.selectedTomes) {
             val tome = Tome.entries.firstOrNull { it.name == name } ?: continue
-            player.tomes[tome] = 1
+            player.tomes.add(tome)
         }
         player.hp = player.maxHp
 
@@ -135,6 +140,7 @@ class Game(
         chestsOpened = 0
         spawnTimer = 0f
         eliteTimer = 45f
+        miniBossTimer = 180f
         pendingLevelUps = 0
         popupItem = null
         spinEffect = 0f
@@ -677,7 +683,7 @@ class Game(
         val (x, y) = spawnPoint()
         val b = Enemy(
             EnemyType.BOSS, x, y,
-            hpScale = levelDef.hpMult,
+            hpScale = levelDef.hpMult * levelDef.bossHpMult,
             dmgScale = levelDef.dmgMult,
             speedScale = 1f,
         )
@@ -774,7 +780,8 @@ class Game(
             var tx = player.x
             var ty = player.y
             if (activeShrine != null && e.type != EnemyType.ELITE &&
-                e.type != EnemyType.BOSS && rngHash(e) % 3 == 0
+                e.type != EnemyType.BOSS && e.type != EnemyType.MINIBOSS &&
+                rngHash(e) % 3 == 0
             ) {
                 tx = activeShrine.x
                 ty = activeShrine.y
@@ -824,6 +831,22 @@ class Game(
         if (e.type == EnemyType.ELITE) {
             giveItem(ItemPool.roll(rng, minute, player.items, meta.disabledItems))
         }
+        if (e.type == EnemyType.MINIBOSS) {
+            // Жирная награда: предмет + россыпь золота + лечение.
+            spawnParticles(e.x, e.y, EnemyType.MINIBOSS.color, 24, 380f, 7f)
+            repeat(6) {
+                pickups.add(
+                    Pickup(
+                        PickupType.GOLD,
+                        e.x + rng.nextFloat() * 120f - 60f,
+                        e.y + rng.nextFloat() * 120f - 60f,
+                        (25 + 5 * gameLevel).toFloat(),
+                    ),
+                )
+            }
+            pickups.add(Pickup(PickupType.HP, e.x, e.y - 30f, 40f))
+            giveItem(ItemPool.roll(rng, minute, player.items, meta.disabledItems))
+        }
         if (e.type == EnemyType.BOSS) {
             boss = null
             spawnParticles(e.x, e.y, levelDef.bossColor, 40, 420f, 8f)
@@ -860,6 +883,23 @@ class Game(
             addText(player.x, player.y - 200f, "ЭЛИТА!", Color.rgb(255, 213, 79), 44f, 1.6f)
         }
 
+        // Мини-босс каждые 3 минуты — жирная награда за убийство.
+        miniBossTimer -= dt
+        if (miniBossTimer <= 0f) {
+            miniBossTimer = 180f
+            val (x, y) = spawnPoint()
+            enemies.add(
+                Enemy(
+                    EnemyType.MINIBOSS, x, y,
+                    (1f + minute * 0.6f) * levelDef.hpMult,
+                    (1f + minute * 0.2f) * levelDef.dmgMult,
+                    speedScaleNow,
+                ),
+            )
+            shake(10f, 0.4f)
+            addText(player.x, player.y - 220f, "МИНИ-БОСС!", Color.rgb(233, 30, 99), 48f, 2f)
+        }
+
         val capturing = world.objectsAround(player.x, player.y).any {
             !it.consumed && (
                 (it is Shrine && it.progress > 0f) || (it is Statue && it.progress > 0f)
@@ -883,7 +923,11 @@ class Game(
         }
         if (enemies.size > 260) {
             enemies.sortBy {
-                if (it.type == EnemyType.BOSS) 0f else dist(player.x, player.y, it.x, it.y)
+                if (it.type == EnemyType.BOSS || it.type == EnemyType.MINIBOSS) {
+                    0f
+                } else {
+                    dist(player.x, player.y, it.x, it.y)
+                }
             }
             while (enemies.size > 240) enemies.removeAt(enemies.size - 1)
         }
@@ -1066,7 +1110,7 @@ class Game(
 
     private fun openLevelUp() {
         pendingLevelUps--
-        upgradeOptions = UpgradePool.rollOptions(player, rng, meta.unlockedWeapons)
+        upgradeOptions = UpgradePool.rollOptions(player, rng)
         if (upgradeOptions.isEmpty()) return
         layoutOptionCards(upgradeOptions.size)
         state = GameState.LEVEL_UP
