@@ -9,6 +9,9 @@ on:
       - ".github/workflows/android-apk.yml"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,3 +37,15 @@ jobs:
           name: mega-survivors-v0.2.${{ github.run_number }}
           path: android-game/mega-survivors-v0.2.${{ github.run_number }}.apk
           retention-days: 30
+
+      # Дублируем APK в Releases: с телефона качается одним тапом,
+      # без zip. Свежая версия всегда на .../releases/latest
+      - name: Publish APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v0.2.${GITHUB_RUN_NUMBER}" \
+            "android-game/mega-survivors-v0.2.${GITHUB_RUN_NUMBER}.apk" \
+            --title "Mega Survivors v0.2.${GITHUB_RUN_NUMBER}" \
+            --notes "Автосборка №${GITHUB_RUN_NUMBER}. Скачайте .apk ниже и установите поверх старой версии." \
+            --latest
