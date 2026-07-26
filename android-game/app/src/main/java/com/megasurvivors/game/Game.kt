@@ -71,6 +71,12 @@ class Game(
     // Камера: плавно догоняет игрока; тряска при мощных событиях.
     var camX = 0f
     var camY = 0f
+
+    /** Кэш объектов мира рядом с игроком (обновляется раз в кадр). */
+    var nearObjects: List<WorldObject> = emptyList()
+        private set
+    /** Расходящиеся кольца смертей (x, y, макс.радиус, 0, жизнь). */
+    val deathRings = ArrayList<FloatArray>()
     var shakeTime = 0f
     var shakeMag = 0f
     /** Сила движения джойстика в текущем кадре (для анимации ног). */
@@ -223,6 +229,7 @@ class Game(
 
         time += dt
         moveMag = dist(0f, 0f, moveX, moveY).coerceAtMost(1f)
+        nearObjects = world.objectsAround(player.x, player.y)
         updatePlayer(dt, moveX, moveY)
         updateWeapons(dt)
         spawnBossIfTime()
@@ -389,7 +396,8 @@ class Game(
                         val bx = player.x + cos(a) * radius
                         val by = player.y + sin(a) * radius
                         for (e in enemies) {
-                            if (e.orbitTick <= 0f && dist(bx, by, e.x, e.y) < 30f + e.type.radius) {
+                            val rr = 30f + e.type.radius
+                            if (e.orbitTick <= 0f && dist2(bx, by, e.x, e.y) < rr * rr) {
                                 hitEnemy(e, dmg, knockFrom = player)
                                 e.orbitTick = WeaponBalance.ORBIT_HIT_INTERVAL
                             }
@@ -403,9 +411,8 @@ class Game(
                         val radius = WeaponBalance.auraRadius(w.level) * areaMult * (if (evo) 1.4f else 1f)
                         val dmg = WeaponBalance.auraDamage(w.level) * dmgMult * (if (evo) 2.2f else 1f)
                         for (e in enemies) {
-                            if (e.fireTick <= 0f &&
-                                dist(player.x, player.y, e.x, e.y) < radius + e.type.radius
-                            ) {
+                            val rr = radius + e.type.radius
+                            if (e.fireTick <= 0f && dist2(player.x, player.y, e.x, e.y) < rr * rr) {
                                 hitEnemy(e, dmg, knockFrom = null)
                                 e.fireTick = WeaponBalance.AURA_TICK
                             }
@@ -446,7 +453,8 @@ class Game(
                         val dmg = WeaponBalance.frostDamage(w.level) * dmgMult * (if (evo) 2.5f else 1f)
                         val slow = if (evo) 0.3f else WeaponBalance.frostSlow(w.level)
                         for (e in enemies) {
-                            if (dist(player.x, player.y, e.x, e.y) < radius + e.type.radius) {
+                            val rr = radius + e.type.radius
+                            if (dist2(player.x, player.y, e.x, e.y) < rr * rr) {
                                 if (e.frostTick <= 0f) {
                                     hitEnemy(e, dmg, knockFrom = null)
                                     e.frostTick = WeaponBalance.FROST_TICK
@@ -605,6 +613,7 @@ class Game(
 
         decayEffects(lightningBolts, dt)
         decayEffects(beams, dt)
+        decayEffects(deathRings, dt)
     }
 
     private fun decayEffects(list: ArrayList<FloatArray>, dt: Float) {
@@ -777,7 +786,7 @@ class Game(
         }
         // Веер снарядов по кругу.
         b.bossShootTimer -= dt
-        if (b.bossShootTimer <= 0f) {
+        if (b.bossShootTimer <= 0f && enemyShots.size < 90) {
             b.bossShootTimer = 9f
             val shots = 12
             for (i in 0 until shots) {
@@ -806,13 +815,13 @@ class Game(
         val dPlayer = dist(e.x, e.y, player.x, player.y)
 
         // Куда идти: босс > дуэль с игроком > фарм по точкам.
+        // Отходит только вплотную — игрок быстрее и может догнать.
         val (tx, ty) = when {
             bossTarget != null -> Pair(bossTarget.x, bossTarget.y)
             dPlayer < 800f -> {
-                // Держит дистанцию ~420: отходит если близко, догоняет если далеко.
                 val d = dPlayer.coerceAtLeast(1f)
-                if (dPlayer < 380f) {
-                    Pair(e.x + (e.x - player.x) / d * 300f, e.y + (e.y - player.y) / d * 300f)
+                if (dPlayer < 220f) {
+                    Pair(e.x + (e.x - player.x) / d * 200f, e.y + (e.y - player.y) / d * 200f)
                 } else {
                     Pair(player.x, player.y)
                 }
@@ -854,7 +863,7 @@ class Game(
 
         // Стреляет в игрока, когда тот рядом.
         e.rivalShootT -= dt
-        if (e.rivalShootT <= 0f && dPlayer < 800f) {
+        if (e.rivalShootT <= 0f && dPlayer < 800f && enemyShots.size < 90) {
             e.rivalShootT = 1.4f
             val a = atan2(player.y - e.y, player.x - e.x)
             enemyShots.add(
@@ -882,8 +891,7 @@ class Game(
             }
         }
 
-        // Лёгкая регенерация, чтобы его нельзя было заковырять мимоходом.
-        e.hp = min(e.maxHp, e.hp + 5f * dt)
+        // Регенерации нет: полученный урон остаётся — соперника МОЖНО убить.
     }
 
     private fun updateEnemyShots(dt: Float) {
@@ -907,9 +915,13 @@ class Game(
     // Враги.
     // ------------------------------------------------------------------
     private fun updateEnemies(dt: Float) {
-        val activeShrine = world.objectsAround(player.x, player.y)
-            .filterIsInstance<Shrine>()
-            .firstOrNull { !it.consumed && it.progress > 0f }
+        var activeShrine: Shrine? = null
+        for (obj in nearObjects) {
+            if (obj is Shrine && !obj.consumed && obj.progress > 0f) {
+                activeShrine = obj
+                break
+            }
+        }
 
         var i = enemies.size - 1
         while (i >= 0) {
@@ -956,6 +968,7 @@ class Game(
                 e.knockY *= 0.85f
             }
 
+            e.age += dt
             if (e.hitFlash > 0f) e.hitFlash -= dt
             if (e.fireTick > 0f) e.fireTick -= dt
             if (e.frostTick > 0f) e.frostTick -= dt
@@ -981,6 +994,9 @@ class Game(
     private fun onEnemyDeath(e: Enemy) {
         kills++
         spawnParticles(e.x, e.y, e.type.color, 6, 220f, 5f)
+        if (deathRings.size < 40) {
+            deathRings.add(floatArrayOf(e.x, e.y, e.type.radius * 2.4f, 0f, 0.3f))
+        }
         pickups.add(Pickup(PickupType.XP, e.x, e.y, e.type.xp))
         pickups.add(Pickup(PickupType.GOLD, e.x - 14f, e.y + 10f, e.type.gold.toFloat()))
         if (rng.nextFloat() < 0.03f) {
@@ -1053,10 +1069,12 @@ class Game(
             if (hasMod(Mod.SWARM)) hp *= 0.6f
             if (hasMod(Mod.TITANS)) hp *= 1.6f
             val spd = speedScaleNow * (if (hasMod(Mod.SPEED_DEMON)) 1.3f else 1f)
+            // Ступень эволюции врагов растёт каждые 4 минуты (визуал + скорость).
+            val stage = (minute / 4).coerceAtMost(3)
             repeat(count) {
                 val type = rollEnemyType()
                 val (x, y) = spawnPoint()
-                enemies.add(Enemy(type, x, y, hp, dmgScaleNow, spd))
+                enemies.add(Enemy(type, x, y, hp, dmgScaleNow, spd * (1f + stage * 0.05f), stage))
             }
         }
 
@@ -1092,7 +1110,7 @@ class Game(
             addText(player.x, player.y - 220f, "МИНИ-БОСС!", Color.rgb(233, 30, 99), 48f, 2f)
         }
 
-        val capturing = world.objectsAround(player.x, player.y).any {
+        val capturing = nearObjects.any {
             !it.consumed && (
                 (it is Shrine && it.progress > 0f) || (it is Statue && it.progress > 0f)
                 )
@@ -1113,15 +1131,25 @@ class Game(
                 }
             }
         }
-        if (enemies.size > 260) {
-            enemies.sortBy {
-                if (it.type == EnemyType.BOSS || it.type == EnemyType.MINIBOSS) {
-                    0f
-                } else {
-                    dist(player.x, player.y, it.x, it.y)
+        // Страховка от лагов: без сортировки убираем самых дальних рядовых.
+        if (enemies.size > 240) {
+            var i = enemies.size - 1
+            var far2 = 2600f * 2600f
+            while (enemies.size > 220 && i >= 0) {
+                val e = enemies[i]
+                if (e.type != EnemyType.BOSS && e.type != EnemyType.MINIBOSS &&
+                    e.type != EnemyType.RIVAL && e.type != EnemyType.ELITE &&
+                    dist2(player.x, player.y, e.x, e.y) > far2
+                ) {
+                    enemies.removeAt(i)
+                }
+                i--
+                if (i < 0 && enemies.size > 220) {
+                    // Все близко — ослабляем порог и проходим ещё раз.
+                    far2 *= 0.6f
+                    i = enemies.size - 1
                 }
             }
-            while (enemies.size > 240) enemies.removeAt(enemies.size - 1)
         }
     }
 
@@ -1169,7 +1197,8 @@ class Game(
             var dead = p.life <= 0f
             if (!dead) {
                 for (e in enemies) {
-                    if (dist(p.x, p.y, e.x, e.y) < p.radius + e.type.radius) {
+                    val rr = p.radius + e.type.radius
+                    if (dist2(p.x, p.y, e.x, e.y) < rr * rr) {
                         if (p.kind == ProjKind.BANANA) {
                             if (e.bananaTick <= 0f) {
                                 hitEnemy(e, p.damage, knockFrom = null)
@@ -1258,6 +1287,7 @@ class Game(
         while (i >= 0) {
             val p = pickups[i]
             val d = dist(p.x, p.y, player.x, player.y)
+            // Бобы/монеты подпрыгивают на месте — анимация в рендере.
             if (p.magnetized || d < magnetR) {
                 p.magnetized = true
                 val speed = 650f
@@ -1266,7 +1296,8 @@ class Game(
             }
             if (d < player.radius + 16f) {
                 when (p.type) {
-                    PickupType.XP -> gainXp(p.value)
+                    // Кристаллы дорожают с минутами — поздняя прокачка быстрее.
+                    PickupType.XP -> gainXp(p.value * (1f + minute * 0.08f))
                     PickupType.GOLD -> gainGold(p.value.toInt(), silent = true)
                     PickupType.HP -> {
                         player.hp = min(player.maxHp, player.hp + p.value)
@@ -1292,7 +1323,7 @@ class Game(
         while (player.xp >= player.xpToNext) {
             player.xp -= player.xpToNext
             player.level++
-            player.xpToNext = 10f + (player.level - 1) * 6f + (player.level - 1) * (player.level - 1) * 0.8f
+            player.xpToNext = 10f + (player.level - 1) * 5f + (player.level - 1) * (player.level - 1) * 0.35f
             pendingLevelUps++
         }
         if (pendingLevelUps > 0 && state == GameState.RUNNING) {
@@ -1326,7 +1357,7 @@ class Game(
     // Объекты мира.
     // ------------------------------------------------------------------
     private fun updateWorldObjects(dt: Float) {
-        for (obj in world.objectsAround(player.x, player.y)) {
+        for (obj in nearObjects) {
             if (obj.consumed) continue
             when (obj) {
                 is Chest -> {

@@ -69,8 +69,8 @@ enum class EnemyType(
     ELITE(600f, 85f, 24f, 48f, 25f, 30, Color.rgb(255, 213, 79)),
     MINIBOSS(2600f, 82f, 30f, 64f, 60f, 0, Color.rgb(233, 30, 99)),
     BOSS(42000f, 72f, 40f, 96f, 100f, 300, Color.rgb(103, 58, 183)),
-    /** Герой-соперник (мод «Соперник»). */
-    RIVAL(900f, 245f, 22f, 26f, 150f, 200, Color.rgb(120, 30, 40)),
+    /** Герой-соперник (мод «Соперник»); медленнее игрока — его можно догнать. */
+    RIVAL(900f, 205f, 22f, 26f, 150f, 200, Color.rgb(120, 30, 40)),
 }
 
 class Enemy(
@@ -81,10 +81,14 @@ class Enemy(
     val dmgScale: Float,
     /** Множитель скорости (враги ускоряются к концу забега). */
     val speedScale: Float = 1f,
+    /** Ступень эволюции 0..3: враги мутируют со временем забега. */
+    val stage: Int = 0,
 ) {
     var hp = type.hp * hpScale
     val maxHp = hp
     var hitFlash = 0f
+    /** Возраст (анимация появления). */
+    var age = 0f
     /** Фаза анимации (пульсация), чтобы враги не дёргались синхронно. */
     val animPhase = (System.identityHashCode(this) and 0xFF) / 255f * 6.28f
 
@@ -199,4 +203,11 @@ fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
     val dx = x2 - x1
     val dy = y2 - y1
     return sqrt(dx * dx + dy * dy)
+}
+
+/** Квадрат расстояния — для горячих циклов столкновений (без sqrt). */
+fun dist2(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+    val dx = x2 - x1
+    val dy = y2 - y1
+    return dx * dx + dy * dy
 }

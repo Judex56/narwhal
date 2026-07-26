@@ -14,11 +14,9 @@ class MetaStore(context: Context) {
 
     var gold: Int = prefs.getInt("gold", 0)
 
+    /** На время теста всё оружие открыто сразу. */
     val unlockedWeapons: MutableSet<String> =
-        (
-            prefs.getStringSet("unlocked", null)
-                ?: setOf("DART", "ORBIT", "AURA", "LIGHTNING")
-            ).toMutableSet()
+        WeaponType.entries.map { it.name }.toMutableSet()
 
     /** Выбранные в забег оружия: от одного до всех сразу. */
     val selectedWeapons: MutableSet<String> =

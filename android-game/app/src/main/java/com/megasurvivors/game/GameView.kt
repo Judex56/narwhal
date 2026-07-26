@@ -30,7 +30,7 @@ class GameView(context: Context, private val version: String) :
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (game == null) {
             game = Game(width.toFloat(), height.toFloat(), meta, version).also {
-                renderer = Renderer(it)
+                renderer = Renderer(it, context)
             }
         }
     }
