@@ -1,0 +1,51 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - claude/vampire-survivors-android-bakwcu
+    paths:
+      - "android-game/**"
+      - ".github/workflows/android-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build debug APK
+        working-directory: android-game
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             "mega-survivors-v0.2.${GITHUB_RUN_NUMBER}.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: mega-survivors-v0.2.${{ github.run_number }}
+          path: android-game/mega-survivors-v0.2.${{ github.run_number }}.apk
+          retention-days: 30
+
+      # Дублируем APK в Releases: с телефона качается одним тапом,
+      # без zip. Свежая версия всегда на .../releases/latest
+      - name: Publish APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v0.2.${GITHUB_RUN_NUMBER}" \
+            "android-game/mega-survivors-v0.2.${GITHUB_RUN_NUMBER}.apk" \
+            --title "Mega Survivors v0.2.${GITHUB_RUN_NUMBER}" \
+            --notes "Автосборка №${GITHUB_RUN_NUMBER}. Скачайте .apk ниже и установите поверх старой версии." \
+            --latest
